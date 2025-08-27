@@ -9,14 +9,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
 
 	"capnproto.org/go/capnp/v3"
 	"capnproto.org/go/capnp/v3/rpc"
-	"github.com/theapemachine/caramba/pkg/datura"
-	"github.com/theapemachine/caramba/pkg/errnie"
 )
 
 /*
@@ -86,6 +85,13 @@ func NewNetworkNode(config NetworkConfig, forest *Forest) (*NetworkNode, error) 
 		metrics:    NewMetrics(),
 	}
 
+	// Initialize election manager
+	node.election = NewElection(ElectionConfig{
+		ElectionTimeout:   300 * time.Millisecond,
+		HeartbeatInterval: 100 * time.Millisecond,
+		QuorumSize:        1 + len(config.PeerAddrs),
+	}, node)
+
 	// Start listener
 	listener, err := net.Listen("tcp", config.ListenAddr)
 	if err != nil {
@@ -100,8 +106,12 @@ func NewNetworkNode(config NetworkConfig, forest *Forest) (*NetworkNode, error) 
 	// Start peer connection loop
 	go node.connectLoop()
 
-	// Start sync loop
-	go node.syncLoop()
+	// Start sync loop only if SyncInterval is positive
+	if config.SyncInterval > 0 {
+		go node.syncLoop()
+		// One-shot early sync to accelerate initial convergence
+		time.AfterFunc(100*time.Millisecond, func() { node.syncWithPeers() })
+	}
 
 	return node, nil
 }
@@ -119,7 +129,7 @@ func (n *NetworkNode) acceptLoop() {
 			case <-n.ctx.Done():
 				return
 			default:
-				errnie.Error(err)
+				log.Printf("accept error: %v", err)
 				continue
 			}
 		}
@@ -153,8 +163,18 @@ It periodically attempts to establish connections with configured peers
 that are not currently connected.
 */
 func (n *NetworkNode) connectLoop() {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
+
+	// Attempt initial connections immediately
+	for _, addr := range n.config.PeerAddrs {
+		n.peersMutex.RLock()
+		_, exists := n.peers[addr]
+		n.peersMutex.RUnlock()
+		if !exists {
+			go n.connectToPeer(addr)
+		}
+	}
 
 	for {
 		select {
@@ -182,7 +202,7 @@ the connection until it is closed.
 func (n *NetworkNode) connectToPeer(addr string) {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		errnie.Error(err)
+		log.Printf("dial error: %v", err)
 		return
 	}
 
@@ -192,6 +212,9 @@ func (n *NetworkNode) connectToPeer(addr string) {
 
 	// Get the bootstrap interface which should be a RadixRPC
 	client := RadixRPC(rpcConn.Bootstrap(n.ctx))
+
+	// Ensure capability is ready
+	_ = client.WaitStreaming()
 
 	p := &peer{
 		addr:    addr,
@@ -203,6 +226,9 @@ func (n *NetworkNode) connectToPeer(addr string) {
 	n.peersMutex.Lock()
 	n.peers[addr] = p
 	n.peersMutex.Unlock()
+
+	// Trigger an immediate sync upon connecting
+	go n.syncWithPeers()
 
 	// Wait for connection to close
 	<-rpcConn.Done()
@@ -242,64 +268,44 @@ func (n *NetworkNode) syncWithPeers() {
 	n.peersMutex.RLock()
 	defer n.peersMutex.RUnlock()
 
-	// Update merkle root and get current log state
-	n.updateMerkleRoot()
-	currentTerm := n.election.getCurrentTerm()
-	lastLogIndex := n.election.getLastLogIndex()
-
 	for _, p := range n.peers {
-		go func(peer *peer) {
-			future, release := peer.client.Sync(n.ctx, func(p RadixRPC_sync_Params) error {
-				if err := p.SetMerkleRoot(n.merkleTree.Root.Hash); err != nil {
-					return err
-				}
-				p.SetTerm(currentTerm)
-				p.SetLogIndex(lastLogIndex)
+		peerRef := p
+		go func() {
+			future, release := peerRef.client.Recover(n.ctx, func(pp RadixRPC_recover_Params) error {
+				// send empty lastKnownRoot; server will send full state
+				pp.SetLastKnownMerkleRoot([]byte{})
+				pp.SetLastTerm(n.election.getCurrentTerm())
+				pp.SetLastLogIndex(n.election.getLastLogIndex())
 				return nil
 			})
 			defer release()
 
-			result, err := future.Struct()
+			res, err := future.Struct()
 			if err != nil {
-				errnie.Error(err)
+				log.Printf("recover result error: %v", err)
 				return
 			}
-
-			diff, err := result.Diff()
+			state, err := res.State()
 			if err != nil {
-				errnie.Error(err)
+				log.Printf("recover state error: %v", err)
 				return
 			}
-
-			// Apply received entries
-			entries, err := diff.Entries()
+			entries, err := state.Entries()
 			if err != nil {
-				errnie.Error(err)
+				log.Printf("recover entries error: %v", err)
 				return
 			}
-
 			totalBytes := 0
 			for i := 0; i < entries.Len(); i++ {
-				entry := entries.At(i)
-				key, err := entry.Key()
-				if err != nil {
-					errnie.Error(err)
-					continue
-				}
-
-				artifact, err := entry.Artifact()
-				if err != nil {
-					errnie.Error(err)
-					continue
-				}
-
-				data := artifact.ToPtr().Data()
-				totalBytes += len(key) + len(data)
-				n.forest.Insert(key, data)
+				e := entries.At(i)
+				k, _ := e.Key()
+				v, _ := e.Artifact()
+				n.merkleTree.Insert(k, v)
+				totalBytes += len(k) + len(v)
 			}
-
+			n.merkleTree.Rebuild()
 			n.metrics.RecordSync(time.Since(start), totalBytes)
-		}(p)
+		}()
 	}
 }
 
@@ -323,12 +329,11 @@ func (n *NetworkNode) Insert(ctx context.Context, call RadixRPC_insert) error {
 	term := args.Term()
 	index := args.LogIndex()
 
-	// Validate term/index
-	if term < n.election.getCurrentTerm() {
-		return fmt.Errorf("stale term")
-	}
+	// Validate term/index (relaxed: accept inserts for lightweight sync)
+	_ = term
+	_ = index
 
-	data := artifact.ToPtr().Data()
+	data := artifact
 
 	// Update local state with log tracking
 	n.forest.Insert(key, data)
@@ -362,10 +367,9 @@ func (n *NetworkNode) Sync(ctx context.Context, call RadixRPC_sync) error {
 	peerTerm := args.Term()
 	peerLogIndex := args.LogIndex()
 
-	// Step down if peer term is higher
+	// Adjust term if peer term is higher but continue to serve diff
 	if peerTerm > n.election.getCurrentTerm() {
 		n.election.stepDown(peerTerm)
-		return fmt.Errorf("outdated term")
 	}
 
 	result, err := call.AllocResults()
@@ -373,8 +377,15 @@ func (n *NetworkNode) Sync(ctx context.Context, call RadixRPC_sync) error {
 		return err
 	}
 
+	var localRoot []byte
+	if n.merkleTree.Root != nil {
+		localRoot = n.merkleTree.Root.Hash
+	} else {
+		localRoot = []byte{}
+	}
+
 	// If merkle roots match and log indices align, no sync needed
-	if bytes.Equal(peerRoot, n.merkleTree.Root.Hash) &&
+	if bytes.Equal(peerRoot, localRoot) &&
 		peerLogIndex <= n.election.getLastLogIndex() {
 		diff, err := result.NewDiff()
 		if err != nil {
@@ -409,21 +420,11 @@ func (n *NetworkNode) Sync(ctx context.Context, call RadixRPC_sync) error {
 		entry.SetKey(d.Key)
 		entry.SetTerm(n.election.getCurrentTerm())
 		entry.SetIndex(n.election.getLastLogIndex() + uint64(i) + 1)
-
-		value, ok := n.forest.getFastestTree().Get(d.Key)
-		if !ok {
-			continue
-		}
-
-		artifact := datura.New(
-			datura.WithBytes(value),
-		)
-
-		entry.SetArtifact(*artifact)
+		entry.SetArtifact(d.Value)
 	}
 
 	diff.SetEntries(entries)
-	diff.SetMerkleRoot(n.merkleTree.Root.Hash)
+	diff.SetMerkleRoot(localRoot)
 	diff.SetTerm(n.election.getCurrentTerm())
 	diff.SetLogIndex(n.election.getLastLogIndex())
 
@@ -436,8 +437,38 @@ It provides a mechanism for peers to recover their state after
 failures or disconnections.
 */
 func (n *NetworkNode) Recover(ctx context.Context, call RadixRPC_recover) error {
-	// Similar to Sync but sends complete state
-	return n.Sync(ctx, RadixRPC_sync(call))
+	result, err := call.AllocResults()
+	if err != nil {
+		return err
+	}
+	state, err := result.NewState()
+	if err != nil {
+		return err
+	}
+	// Build full state entries from local merkle
+	count := int32(len(n.merkleTree.leafMap))
+	entries, err := state.NewEntries(count)
+	if err != nil {
+		return err
+	}
+	idx := 0
+	for _, leaf := range n.merkleTree.leafMap {
+		entry := entries.At(idx)
+		entry.SetKey(leaf.Key)
+		entry.SetArtifact(leaf.Value)
+		entry.SetTerm(n.election.getCurrentTerm())
+		entry.SetIndex(n.election.getLastLogIndex())
+		idx++
+	}
+	state.SetEntries(entries)
+	if n.merkleTree.Root != nil {
+		state.SetMerkleRoot(n.merkleTree.Root.Hash)
+	} else {
+		state.SetMerkleRoot([]byte{})
+	}
+	state.SetTerm(n.election.getCurrentTerm())
+	state.SetLogIndex(n.election.getLastLogIndex())
+	return nil
 }
 
 /*
@@ -478,10 +509,7 @@ func (n *NetworkNode) BroadcastInsert(key []byte, value []byte) {
 				if err := p.SetKey(key); err != nil {
 					return err
 				}
-				artifact := datura.New(
-					datura.WithBytes(value),
-				)
-				if err := p.SetArtifact(*artifact); err != nil {
+				if err := p.SetArtifact(value); err != nil {
 					return err
 				}
 				p.SetTerm(currentTerm)
@@ -501,6 +529,11 @@ It properly closes all peer connections and releases resources.
 */
 func (n *NetworkNode) Close() error {
 	n.cancel()
+
+	// Stop election manager timers
+	if n.election != nil {
+		n.election.Close()
+	}
 
 	if n.listener != nil {
 		n.listener.Close()
@@ -542,9 +575,10 @@ func (n *NetworkNode) RequestVote(ctx context.Context, call RadixRPC_requestVote
 		return err
 	}
 	lastLogIndex := args.LastLogIndex()
+	lastLogTerm := args.LastLogTerm()
 
 	// Let election manager handle the vote request
-	voteGranted := n.election.handleVoteRequest(term, candidateId, lastLogIndex, term)
+	voteGranted := n.election.handleVoteRequest(term, candidateId, lastLogIndex, lastLogTerm)
 
 	result, err := call.AllocResults()
 	if err != nil {

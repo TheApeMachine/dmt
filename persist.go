@@ -56,6 +56,7 @@ type PersistentStore struct {
 	snapCount uint64    // Number of entries before triggering snapshot
 	lastSnap  time.Time // Time of last snapshot
 	snapMutex sync.RWMutex
+	closed    bool
 }
 
 /*
@@ -159,7 +160,11 @@ It listens on the sync channel and ensures that buffered writes are
 persisted to stable storage.
 */
 func (ps *PersistentStore) backgroundSync() {
-	for range ps.syncChan {
+	for {
+		_, ok := <-ps.syncChan
+		if !ok {
+			return
+		}
 		ps.writeMutex.Lock()
 		ps.walWriter.Flush()
 		ps.walFile.Sync()
@@ -172,9 +177,14 @@ Close closes the persistent store, ensuring all buffered data is
 written to disk and resources are properly released.
 */
 func (ps *PersistentStore) Close() error {
-	close(ps.syncChan)
 	ps.writeMutex.Lock()
 	defer ps.writeMutex.Unlock()
+	if ps.closed {
+		return nil
+	}
+	ps.closed = true
+	// close channel safely
+	close(ps.syncChan)
 
 	if err := ps.walWriter.Flush(); err != nil {
 		return err
@@ -363,4 +373,89 @@ func (ps *PersistentStore) GetLastState() (term, index uint64) {
 	ps.writeMutex.Lock()
 	defer ps.writeMutex.Unlock()
 	return ps.lastTerm, ps.lastIndex
+}
+
+// UpdateTerm persists the current term to the WAL without adding a KV entry.
+// It writes a snapshot-style record to track the latest term while preserving index.
+func (ps *PersistentStore) UpdateTerm(term uint64) error {
+	ps.writeMutex.Lock()
+	defer ps.writeMutex.Unlock()
+	ps.lastTerm = term
+	// Write a snapshot record with new term and current index
+	if err := ps.walWriter.WriteByte(opSnapshot); err != nil {
+		return err
+	}
+	if err := binary.Write(ps.walWriter, binary.LittleEndian, ps.lastTerm); err != nil {
+		return err
+	}
+	if err := binary.Write(ps.walWriter, binary.LittleEndian, ps.lastIndex); err != nil {
+		return err
+	}
+	// Flush in background
+	select {
+	case ps.syncChan <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+// LoadAll returns all key/value entries recorded in the WAL in write order.
+// It is used for state recovery to rebuild in-memory structures.
+func (ps *PersistentStore) LoadAll() ([]WALEntry, error) {
+	file, err := os.Open(ps.walPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+	entries := make([]WALEntry, 0)
+	for {
+		op, err := reader.ReadByte()
+		if err != nil {
+			break
+		}
+		switch op {
+		case opInsert:
+			var term uint64
+			var index uint64
+			if err := binary.Read(reader, binary.LittleEndian, &term); err != nil {
+				return entries, nil
+			}
+			if err := binary.Read(reader, binary.LittleEndian, &index); err != nil {
+				return entries, nil
+			}
+			var klen uint32
+			if err := binary.Read(reader, binary.LittleEndian, &klen); err != nil {
+				return entries, nil
+			}
+			key := make([]byte, klen)
+			if _, err := reader.Read(key); err != nil {
+				return entries, nil
+			}
+			var vlen uint32
+			if err := binary.Read(reader, binary.LittleEndian, &vlen); err != nil {
+				return entries, nil
+			}
+			val := make([]byte, vlen)
+			if _, err := reader.Read(val); err != nil {
+				return entries, nil
+			}
+			entries = append(entries, WALEntry{Op: opInsert, Term: term, Index: index, Key: key, Value: val})
+		case opSnapshot:
+			// Skip snapshot metadata
+			var term uint64
+			var index uint64
+			if err := binary.Read(reader, binary.LittleEndian, &term); err != nil {
+				return entries, nil
+			}
+			if err := binary.Read(reader, binary.LittleEndian, &index); err != nil {
+				return entries, nil
+			}
+		}
+	}
+	return entries, nil
 }

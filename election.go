@@ -96,7 +96,14 @@ in a continuous loop until shutdown.
 func (e *Election) run() {
 	e.resetElectionTimer()
 
+	var hbC <-chan time.Time
 	for {
+		if e.getState() == Leader && e.heartbeatTimer != nil {
+			hbC = e.heartbeatTimer.C
+		} else {
+			hbC = nil
+		}
+
 		select {
 		case <-e.shutdown:
 			return
@@ -107,10 +114,8 @@ func (e *Election) run() {
 		case voter := <-e.votes:
 			e.handleVote(voter)
 
-		case <-e.heartbeatTimer.C:
-			if e.getState() == Leader {
-				e.sendHeartbeats()
-			}
+		case <-hbC:
+			e.sendHeartbeats()
 		}
 	}
 }
@@ -142,7 +147,11 @@ func (e *Election) startElection() {
 
 	// Track votes received (including self-vote)
 	votesReceived := 1
-	votesNeeded := (len(peers) / 2) + 1
+	// Use configured quorum size when set; otherwise majority of cluster
+	votesNeeded := e.config.QuorumSize
+	if votesNeeded <= 0 {
+		votesNeeded = ((len(peers) + 1) / 2) + 1
+	}
 
 	// Request votes from all peers
 	for _, p := range peers {
@@ -150,7 +159,8 @@ func (e *Election) startElection() {
 			future, release := peer.client.RequestVote(e.node.ctx, func(p RadixRPC_requestVote_Params) error {
 				p.SetTerm(currentTerm)
 				p.SetCandidateId(e.node.config.NodeID)
-				p.SetLastLogIndex(uint64(len(e.node.merkleTree.Root.Hash)))
+				p.SetLastLogIndex(e.getLastLogIndex())
+				p.SetLastLogTerm(e.getLastLogTerm())
 				return nil
 			})
 			defer release()
@@ -311,16 +321,24 @@ It implements the Raft voting rules, checking term numbers and log
 indices to decide whether to grant the vote.
 */
 func (e *Election) handleVoteRequest(term uint64, candidateId string, lastLogIndex uint64, lastLogTerm uint64) bool {
-	e.stateLock.Lock()
-	defer e.stateLock.Unlock()
+	// Read current state without holding write lock
+	e.stateLock.RLock()
+	curTerm := e.term
+	votedFor := e.votedFor
+	e.stateLock.RUnlock()
 
-	// Step down if term is newer
-	if term > e.term {
+	// Step down outside of lock if term is newer
+	if term > curTerm {
 		e.stepDown(term)
+		// refresh local view
+		e.stateLock.RLock()
+		curTerm = e.term
+		votedFor = e.votedFor
+		e.stateLock.RUnlock()
 	}
 
 	// Check term and whether we've voted this term
-	if term < e.term || (e.votedFor != "" && e.votedFor != candidateId) {
+	if term < curTerm || (votedFor != "" && votedFor != candidateId) {
 		return false
 	}
 
@@ -334,8 +352,10 @@ func (e *Election) handleVoteRequest(term uint64, candidateId string, lastLogInd
 		return false
 	}
 
-	// Grant vote
+	// Grant vote and reset timer
+	e.stateLock.Lock()
 	e.votedFor = candidateId
+	e.stateLock.Unlock()
 	e.resetElectionTimer()
 	return true
 }
@@ -346,26 +366,27 @@ It updates terms if necessary, resets election timeouts, and
 maintains the leader-follower relationship in the cluster.
 */
 func (e *Election) handleHeartbeat(term uint64, leaderId string) bool {
-	e.stateLock.Lock()
-	defer e.stateLock.Unlock()
+	// Read current term safely
+	e.stateLock.RLock()
+	curTerm := e.term
+	role := e.state
+	e.stateLock.RUnlock()
 
-	// Step down if term is higher
-	if term > e.term {
+	// Step down outside lock if higher term
+	if term > curTerm {
 		e.stepDown(term)
-		// Update metrics with new leader
 		e.node.metrics.SetNodeRole("follower", 0.0)
 		return true
 	}
 
 	// Reject if term is lower
-	if term < e.term {
+	if term < curTerm {
 		return false
 	}
 
 	// Accept heartbeat if term matches and from valid leader
-	if e.state != Leader && leaderId != "" {
+	if role != Leader && leaderId != "" {
 		e.resetElectionTimer()
-		// Update metrics
 		e.node.metrics.termNumber.Store(term)
 		e.node.metrics.SetNodeRole("follower", 0.0)
 		return true
@@ -380,6 +401,12 @@ It signals the run loop to stop and cleans up resources.
 */
 func (e *Election) Close() {
 	close(e.shutdown)
+	if e.electionTimer != nil {
+		e.electionTimer.Stop()
+	}
+	if e.heartbeatTimer != nil {
+		e.heartbeatTimer.Stop()
+	}
 }
 
 /*
@@ -407,4 +434,11 @@ func (e *Election) getLastLogIndex() uint64 {
 	e.logLock.RLock()
 	defer e.logLock.RUnlock()
 	return e.lastLogIndex
+}
+
+// getLastLogTerm returns the term of the last log entry
+func (e *Election) getLastLogTerm() uint64 {
+	e.logLock.RLock()
+	defer e.logLock.RUnlock()
+	return e.lastLogTerm
 }

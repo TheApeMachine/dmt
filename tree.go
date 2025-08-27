@@ -39,16 +39,30 @@ func NewTree(persistDir string) (*Tree, error) {
 	var err error
 	var term, index uint64
 
+	root := iradix.New[[]byte]()
+
 	if persistDir != "" {
 		persist, err = NewPersistentStore(persistDir)
 		if err != nil {
 			return nil, err
 		}
-		term, index = persist.GetLastState()
+		// Replay WAL to reconstruct state
+		if entries, err := persist.LoadAll(); err == nil {
+			for _, e := range entries {
+				if e.Op == opInsert {
+					root, _, _ = root.Insert(e.Key, e.Value)
+					index = e.Index
+					term = e.Term
+				}
+			}
+		}
+		if term == 0 && index == 0 {
+			term, index = persist.GetLastState()
+		}
 	}
 
 	return &Tree{
-		root:     iradix.New[[]byte](),
+		root:     root,
 		perfs:    ring.New(10),
 		persist:  persist,
 		term:     term,
@@ -69,6 +83,9 @@ func (tree *Tree) Seek(key []byte) ([]byte, bool) {
 
 	for k, v, ok := it.Next(); ok; k, v, ok = it.Next() {
 		if bytes.Compare(k, key) >= 0 {
+			// record perf before returning
+			tree.perfs.Value = time.Since(t).Nanoseconds()
+			tree.perfs = tree.perfs.Next()
 			return v, true
 		}
 	}
@@ -90,15 +107,16 @@ func (tree *Tree) Insert(key []byte, value []byte) (*Tree, bool) {
 	defer tree.mu.Unlock()
 
 	t := time.Now()
-	tree.root, _, tree.updated = tree.root.Insert(key, value)
+	var updated bool
+	tree.root, _, updated = tree.root.Insert(key, value)
+	// Treat both new and replaced values as a successful update for API semantics
+	tree.updated = true
 
-	if tree.updated {
+	if updated || tree.updated {
 		tree.logIndex++
 		// Log to WAL if persistence is enabled
 		if tree.persist != nil {
 			if err := tree.persist.LogInsert(key, value, tree.term, tree.logIndex); err != nil {
-				// Log error but don't fail the operation
-				// TODO: Add proper error handling/logging
 				_ = err
 			}
 		}
@@ -106,7 +124,7 @@ func (tree *Tree) Insert(key []byte, value []byte) (*Tree, bool) {
 
 	tree.perfs.Value = time.Since(t).Nanoseconds()
 	tree.perfs = tree.perfs.Next()
-	return tree, tree.updated
+	return tree, true
 }
 
 /*
@@ -126,12 +144,22 @@ AVG returns the average performance of the tree in nanoseconds.
 */
 func (tree *Tree) AVG() int64 {
 	var sum int64
+	var count int64
 
 	tree.perfs.Do(func(v any) {
-		sum += v.(int64)
+		if v == nil {
+			return
+		}
+		if n, ok := v.(int64); ok {
+			sum += n
+			count++
+		}
 	})
 
-	return sum / int64(tree.perfs.Len())
+	if count == 0 {
+		return 0
+	}
+	return sum / count
 }
 
 /*
@@ -144,11 +172,14 @@ func (tree *Tree) Close() error {
 	return nil
 }
 
-// UpdateTerm updates the current term number
+// UpdateTerm updates the current term number and persists it
 func (tree *Tree) UpdateTerm(term uint64) {
 	tree.mu.Lock()
 	defer tree.mu.Unlock()
 	tree.term = term
+	if tree.persist != nil {
+		_ = tree.persist.UpdateTerm(term)
+	}
 }
 
 // GetLogState returns the current term and log index

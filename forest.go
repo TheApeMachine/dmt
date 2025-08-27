@@ -245,7 +245,7 @@ func (forest *Forest) Insert(key []byte, value []byte) {
 	}
 
 	// Broadcast to other nodes if networked
-	if forest.network != nil {
+	if forest.network != nil && forest.network.election != nil {
 		forest.network.BroadcastInsert(key, value)
 	}
 }

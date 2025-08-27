@@ -91,10 +91,17 @@ func (mt *MerkleTree) buildLevel(nodes []*MerkleNode) *MerkleNode {
 			right = nodes[i+1]
 		}
 
+		// Ensure deterministic parent hash independent of original child ordering
+		l := left
+		r := right
+		if r != nil && bytes.Compare(l.Hash, r.Hash) > 0 {
+			l, r = r, l
+		}
+
 		parent := &MerkleNode{
 			Left:  left,
 			Right: right,
-			Hash:  mt.hashChildren(left, right),
+			Hash:  mt.hashChildren(l, r),
 		}
 
 		// Store in node map
@@ -228,11 +235,12 @@ func (mt *MerkleTree) VerifyProof(key, value []byte, proof [][]byte) bool {
 	hash := mt.hashKV(key, value)
 
 	for _, sibling := range proof {
-		if bytes.Compare(hash, sibling) < 0 {
-			hash = mt.hashChildren(&MerkleNode{Hash: hash}, &MerkleNode{Hash: sibling})
-		} else {
-			hash = mt.hashChildren(&MerkleNode{Hash: sibling}, &MerkleNode{Hash: hash})
+		left := &MerkleNode{Hash: hash}
+		right := &MerkleNode{Hash: sibling}
+		if bytes.Compare(left.Hash, right.Hash) > 0 {
+			left, right = right, left
 		}
+		hash = mt.hashChildren(left, right)
 	}
 
 	return bytes.Equal(hash, mt.Root.Hash)
