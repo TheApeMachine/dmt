@@ -74,6 +74,22 @@ struct HeartbeatPayload {
   leaderId @1 :Text;
 }
 
+struct AppendEntriesPayload {
+  term @0 :UInt64;
+  leaderId @1 :Text;
+  prevLogIndex @2 :UInt64;
+  prevLogTerm @3 :UInt64;
+  entries @4 :List(LogEntry);
+  leaderCommit @5 :UInt64;
+}
+
+struct LogEntry {
+  term @0 :UInt64;
+  index @1 :UInt64;
+  key @2 :Data;
+  value @3 :Data;
+}
+
 interface RadixRPC {
   # Insert an artifact into the tree
   insert @0 (key :Data, artifact :Data, term :UInt64, logIndex :UInt64) -> (success :Bool, term :UInt64, logIndex :UInt64);
@@ -89,4 +105,7 @@ interface RadixRPC {
 
   # Send heartbeat to maintain leadership
   heartbeat @4 (term :UInt64, leaderId :Text) -> (term :UInt64, success :Bool);
+
+  # Append entries for log replication (Raft)
+  appendEntries @5 (term :UInt64, leaderId :Text, prevLogIndex :UInt64, prevLogTerm :UInt64, entries :List(LogEntry), leaderCommit :UInt64) -> (term :UInt64, success :Bool);
 }

@@ -140,15 +140,18 @@ func (ps *PersistentStore) LogInsert(key, value []byte, term, index uint64) erro
 	ps.lastTerm = term
 	ps.lastIndex = index
 
-	// Signal for background sync
-	select {
-	case ps.syncChan <- struct{}{}:
-	default:
+	// Signal for background sync (only if not closed)
+	if !ps.closed {
+		select {
+		case ps.syncChan <- struct{}{}:
+		default:
+		}
 	}
 
 	// Check if snapshot needed
 	if index%ps.snapCount == 0 {
-		go ps.createSnapshot()
+		// Note: createSnapshot will be called externally with tree data
+		// This is just a placeholder for the snapshot trigger logic
 	}
 
 	return nil
@@ -263,8 +266,8 @@ func (ps *PersistentStore) loadLastState() error {
 	return nil
 }
 
-// createSnapshot creates a new snapshot and truncates the WAL
-func (ps *PersistentStore) createSnapshot() error {
+// CreateSnapshotWithTree creates a new snapshot with complete tree state and truncates the WAL
+func (ps *PersistentStore) CreateSnapshotWithTree(tree *Tree) error {
 	ps.snapMutex.Lock()
 	defer ps.snapMutex.Unlock()
 
@@ -286,11 +289,50 @@ func (ps *PersistentStore) createSnapshot() error {
 	}
 	defer file.Close()
 
-	// Write snapshot metadata
+	// Count entries first to write accurate header
+	var entryCount uint64
+	if tree != nil {
+		it := tree.root.Root().Iterator()
+		for _, _, ok := it.Next(); ok; _, _, ok = it.Next() {
+			entryCount++
+		}
+	}
+
+	// Write snapshot header with metadata and entry count
 	if err := binary.Write(file, binary.LittleEndian, ps.lastTerm); err != nil {
 		return err
 	}
 	if err := binary.Write(file, binary.LittleEndian, ps.lastIndex); err != nil {
+		return err
+	}
+	if err := binary.Write(file, binary.LittleEndian, entryCount); err != nil {
+		return err
+	}
+
+	// Write all key-value pairs from the tree
+	if tree != nil {
+		it := tree.root.Root().Iterator()
+		for key, value, ok := it.Next(); ok; key, value, ok = it.Next() {
+			// Write key length and key
+			if err := binary.Write(file, binary.LittleEndian, uint32(len(key))); err != nil {
+				return err
+			}
+			if _, err := file.Write(key); err != nil {
+				return err
+			}
+
+			// Write value length and value
+			if err := binary.Write(file, binary.LittleEndian, uint32(len(value))); err != nil {
+				return err
+			}
+			if _, err := file.Write(value); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Ensure data is written to disk
+	if err := file.Sync(); err != nil {
 		return err
 	}
 
@@ -399,6 +441,73 @@ func (ps *PersistentStore) UpdateTerm(term uint64) error {
 	return nil
 }
 
+// LoadSnapshot loads the most recent snapshot and returns the key-value pairs
+func (ps *PersistentStore) LoadSnapshot() (map[string][]byte, uint64, uint64, error) {
+	// Find the most recent snapshot file
+	snapFiles, err := filepath.Glob(filepath.Join(ps.snapPath, "snapshot-*"))
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	if len(snapFiles) == 0 {
+		return nil, 0, 0, nil // No snapshot exists
+	}
+
+	// Use the most recent snapshot (they're named with term-index, so lexicographic sort works)
+	var latestSnap string
+	for _, snapFile := range snapFiles {
+		if snapFile > latestSnap {
+			latestSnap = snapFile
+		}
+	}
+
+	file, err := os.Open(latestSnap)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	defer file.Close()
+
+	// Read snapshot header
+	var term, index, entryCount uint64
+	if err := binary.Read(file, binary.LittleEndian, &term); err != nil {
+		return nil, 0, 0, err
+	}
+	if err := binary.Read(file, binary.LittleEndian, &index); err != nil {
+		return nil, 0, 0, err
+	}
+	if err := binary.Read(file, binary.LittleEndian, &entryCount); err != nil {
+		return nil, 0, 0, err
+	}
+
+	// Read all key-value pairs
+	data := make(map[string][]byte)
+	for i := uint64(0); i < entryCount; i++ {
+		// Read key
+		var keyLen uint32
+		if err := binary.Read(file, binary.LittleEndian, &keyLen); err != nil {
+			return nil, 0, 0, err
+		}
+		key := make([]byte, keyLen)
+		if _, err := file.Read(key); err != nil {
+			return nil, 0, 0, err
+		}
+
+		// Read value
+		var valueLen uint32
+		if err := binary.Read(file, binary.LittleEndian, &valueLen); err != nil {
+			return nil, 0, 0, err
+		}
+		value := make([]byte, valueLen)
+		if _, err := file.Read(value); err != nil {
+			return nil, 0, 0, err
+		}
+
+		data[string(key)] = value
+	}
+
+	return data, term, index, nil
+}
+
 // LoadAll returns all key/value entries recorded in the WAL in write order.
 // It is used for state recovery to rebuild in-memory structures.
 func (ps *PersistentStore) LoadAll() ([]WALEntry, error) {
@@ -446,7 +555,7 @@ func (ps *PersistentStore) LoadAll() ([]WALEntry, error) {
 			}
 			entries = append(entries, WALEntry{Op: opInsert, Term: term, Index: index, Key: key, Value: val})
 		case opSnapshot:
-			// Skip snapshot metadata
+			// Read snapshot metadata and include as term-only entry
 			var term uint64
 			var index uint64
 			if err := binary.Read(reader, binary.LittleEndian, &term); err != nil {
@@ -455,6 +564,8 @@ func (ps *PersistentStore) LoadAll() ([]WALEntry, error) {
 			if err := binary.Read(reader, binary.LittleEndian, &index); err != nil {
 				return entries, nil
 			}
+			// Add term-only entry to preserve term updates
+			entries = append(entries, WALEntry{Op: opSnapshot, Term: term, Index: index, Key: nil, Value: nil})
 		}
 	}
 	return entries, nil

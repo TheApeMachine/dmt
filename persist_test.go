@@ -1,6 +1,7 @@
 package dmt
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -103,23 +104,24 @@ func TestLoadLastState(t *testing.T) {
 }
 
 func TestCreateSnapshot(t *testing.T) {
-	Convey("Given a persistent store with entries", t, func() {
+	Convey("Given a tree with entries", t, func() {
 		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
 		defer os.RemoveAll(tmpDir)
 
-		store, err := NewPersistentStore(tmpDir)
+		tree, err := NewTree(tmpDir)
 		So(err, ShouldBeNil)
-		defer store.Close()
+		defer tree.Close()
 
-		// Add enough entries to trigger snapshot
-		for i := uint64(1); i <= 1001; i++ {
-			err := store.LogInsert([]byte("key"), []byte("value"), 1, i)
-			So(err, ShouldBeNil)
+		// Add entries to the tree
+		for i := 1; i <= 10; i++ {
+			key := fmt.Sprintf("key%d", i)
+			value := fmt.Sprintf("value%d", i)
+			tree.Insert([]byte(key), []byte(value))
 		}
 
-		Convey("When waiting for snapshot creation", func() {
-			// Wait a bit for async snapshot to complete
-			time.Sleep(100 * time.Millisecond)
+		Convey("When creating a snapshot", func() {
+			err := tree.CreateSnapshot()
+			So(err, ShouldBeNil)
 
 			Convey("Then a snapshot file should exist", func() {
 				files, err := os.ReadDir(filepath.Join(tmpDir, "snapshot"))
@@ -196,6 +198,247 @@ func TestGetLastState(t *testing.T) {
 			term, index := store.GetLastState()
 			So(term, ShouldEqual, uint64(2))
 			So(index, ShouldEqual, uint64(5))
+		})
+	})
+}
+
+func TestWALReplayCorrectness(t *testing.T) {
+	Convey("Given a persistent store with multiple entries", t, func() {
+		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
+		defer os.RemoveAll(tmpDir)
+
+		store, err := NewPersistentStore(tmpDir)
+		So(err, ShouldBeNil)
+
+		// Add test entries
+		testEntries := []struct {
+			key   []byte
+			value []byte
+			term  uint64
+			index uint64
+		}{
+			{[]byte("key1"), []byte("value1"), 1, 1},
+			{[]byte("key2"), []byte("value2"), 1, 2},
+			{[]byte("key3"), []byte("value3"), 2, 3},
+			{[]byte("key1"), []byte("updated1"), 2, 4}, // Update existing key
+		}
+
+		for _, e := range testEntries {
+			err := store.LogInsert(e.key, e.value, e.term, e.index)
+			So(err, ShouldBeNil)
+		}
+
+		store.Close()
+
+		Convey("When simulating a crash and recovery", func() {
+			// Create new tree with same persist directory
+			tree, err := NewTree(tmpDir)
+			So(err, ShouldBeNil)
+			defer tree.Close()
+
+			Convey("Then the tree should contain all entries with correct values", func() {
+				// Check that all entries are recovered correctly
+				value, ok := tree.Get([]byte("key1"))
+				So(ok, ShouldBeTrue)
+				So(string(value), ShouldEqual, "updated1") // Should have updated value
+
+				value, ok = tree.Get([]byte("key2"))
+				So(ok, ShouldBeTrue)
+				So(string(value), ShouldEqual, "value2")
+
+				value, ok = tree.Get([]byte("key3"))
+				So(ok, ShouldBeTrue)
+				So(string(value), ShouldEqual, "value3")
+
+				// Check term and index are recovered
+				term, index := tree.GetLogState()
+				So(term, ShouldEqual, uint64(2))
+				So(index, ShouldEqual, uint64(4))
+			})
+		})
+	})
+}
+
+func TestSnapshotCreationAndRecovery(t *testing.T) {
+	Convey("Given a tree with multiple entries", t, func() {
+		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
+		defer os.RemoveAll(tmpDir)
+
+		tree, err := NewTree(tmpDir)
+		So(err, ShouldBeNil)
+
+		// Add test data
+		testData := map[string]string{
+			"key1": "value1",
+			"key2": "value2",
+			"key3": "value3",
+			"key4": "value4",
+		}
+
+		for key, value := range testData {
+			tree.Insert([]byte(key), []byte(value))
+		}
+
+		// Update term
+		tree.UpdateTerm(5)
+
+		Convey("When creating a snapshot", func() {
+			err := tree.CreateSnapshot()
+			So(err, ShouldBeNil)
+
+			tree.Close()
+
+			Convey("Then recovery should restore complete tree state", func() {
+				newTree, err := NewTree(tmpDir)
+				So(err, ShouldBeNil)
+				defer newTree.Close()
+
+				// Verify all data is recovered
+				for key, expectedValue := range testData {
+					value, ok := newTree.Get([]byte(key))
+					So(ok, ShouldBeTrue)
+					So(string(value), ShouldEqual, expectedValue)
+				}
+
+				// Verify term is recovered
+				term, _ := newTree.GetLogState()
+				So(term, ShouldEqual, uint64(5))
+			})
+		})
+	})
+}
+
+func TestSnapshotWithVariousTreeSizes(t *testing.T) {
+	Convey("Given trees of various sizes", t, func() {
+		sizes := []int{0, 1, 10, 100}
+
+		for _, size := range sizes {
+			Convey(fmt.Sprintf("When testing with %d entries", size), func() {
+				tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("radix-test-%d-%s", size, time.Now().Format("20060102150405")))
+				defer os.RemoveAll(tmpDir)
+
+				tree, err := NewTree(tmpDir)
+				So(err, ShouldBeNil)
+
+				// Add entries
+				for i := 0; i < size; i++ {
+					key := fmt.Sprintf("key%d", i)
+					value := fmt.Sprintf("value%d", i)
+					tree.Insert([]byte(key), []byte(value))
+				}
+
+				// Create snapshot
+				err = tree.CreateSnapshot()
+				So(err, ShouldBeNil)
+
+				tree.Close()
+
+				// Recover and verify
+				newTree, err := NewTree(tmpDir)
+				So(err, ShouldBeNil)
+				defer newTree.Close()
+
+				// Verify all entries are recovered
+				for i := 0; i < size; i++ {
+					key := fmt.Sprintf("key%d", i)
+					expectedValue := fmt.Sprintf("value%d", i)
+					value, ok := newTree.Get([]byte(key))
+					So(ok, ShouldBeTrue)
+					So(string(value), ShouldEqual, expectedValue)
+				}
+			})
+		}
+	})
+}
+
+func TestTermPersistenceAcrossRestarts(t *testing.T) {
+	Convey("Given a tree with term updates", t, func() {
+		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
+		defer os.RemoveAll(tmpDir)
+
+		tree, err := NewTree(tmpDir)
+		So(err, ShouldBeNil)
+
+		// Add some data
+		tree.Insert([]byte("key1"), []byte("value1"))
+
+		// Update term multiple times without new data
+		tree.UpdateTerm(2)
+		tree.UpdateTerm(3)
+		tree.UpdateTerm(5)
+
+		tree.Close()
+
+		Convey("When restarting", func() {
+			newTree, err := NewTree(tmpDir)
+			So(err, ShouldBeNil)
+			defer newTree.Close()
+
+			Convey("Then the latest term should be preserved", func() {
+				term, index := newTree.GetLogState()
+				So(term, ShouldEqual, uint64(5))
+				So(index, ShouldEqual, uint64(1)) // Only one data entry
+
+				// Data should still be there
+				value, ok := newTree.Get([]byte("key1"))
+				So(ok, ShouldBeTrue)
+				So(string(value), ShouldEqual, "value1")
+			})
+		})
+	})
+}
+
+func TestMixedSnapshotAndWALRecovery(t *testing.T) {
+	Convey("Given a tree with snapshot and subsequent WAL entries", t, func() {
+		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
+		defer os.RemoveAll(tmpDir)
+
+		tree, err := NewTree(tmpDir)
+		So(err, ShouldBeNil)
+
+		// Add initial data
+		tree.Insert([]byte("snap1"), []byte("snapvalue1"))
+		tree.Insert([]byte("snap2"), []byte("snapvalue2"))
+
+		// Create snapshot
+		err = tree.CreateSnapshot()
+		So(err, ShouldBeNil)
+
+		// Add more data after snapshot
+		tree.Insert([]byte("wal1"), []byte("walvalue1"))
+		tree.Insert([]byte("wal2"), []byte("walvalue2"))
+		tree.UpdateTerm(10)
+
+		tree.Close()
+
+		Convey("When recovering", func() {
+			newTree, err := NewTree(tmpDir)
+			So(err, ShouldBeNil)
+			defer newTree.Close()
+
+			Convey("Then both snapshot and WAL data should be recovered", func() {
+				// Snapshot data
+				value, ok := newTree.Get([]byte("snap1"))
+				So(ok, ShouldBeTrue)
+				So(string(value), ShouldEqual, "snapvalue1")
+
+				value, ok = newTree.Get([]byte("snap2"))
+				So(ok, ShouldBeTrue)
+				So(string(value), ShouldEqual, "snapvalue2")
+
+				// WAL data
+				value, ok = newTree.Get([]byte("wal1"))
+				So(ok, ShouldBeTrue)
+				So(string(value), ShouldEqual, "walvalue1")
+
+				value, ok = newTree.Get([]byte("wal2"))
+				So(ok, ShouldBeTrue)
+				So(string(value), ShouldEqual, "walvalue2")
+
+				// Term should be latest
+				term, _ := newTree.GetLogState()
+				So(term, ShouldEqual, uint64(10))
+			})
 		})
 	})
 }
