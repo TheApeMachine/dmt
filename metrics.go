@@ -245,7 +245,6 @@ It maintains error counts for monitoring system reliability and debugging.
 */
 func (m *Metrics) RecordError(operation, category string) {
 	m.errorMutex.Lock()
-	defer m.errorMutex.Unlock()
 
 	if m.errorCounts[operation] == nil {
 		m.errorCounts[operation] = make(map[string]*atomic.Uint64)
@@ -254,9 +253,10 @@ func (m *Metrics) RecordError(operation, category string) {
 		m.errorCounts[operation][category] = &atomic.Uint64{}
 	}
 	m.errorCounts[operation][category].Add(1)
+	m.errorMutex.Unlock()
 
-	// Update system health based on error patterns
-	m.updateSystemHealthLocked()
+	// Update system health outside of errorMutex to avoid lock order issues
+	m.updateSystemHealth()
 }
 
 /*
@@ -373,6 +373,8 @@ func (m *Metrics) updateSystemHealthLocked() {
 
 	// Check error rates
 	totalErrors := uint64(0)
+	// Safely snapshot error counts while holding errorMutex read lock
+	m.errorMutex.RLock()
 	for _, categories := range m.errorCounts {
 		for _, counter := range categories {
 			if counter != nil {
@@ -380,6 +382,7 @@ func (m *Metrics) updateSystemHealthLocked() {
 			}
 		}
 	}
+	m.errorMutex.RUnlock()
 
 	// If error rate is high, mark as unhealthy
 	totalOps := m.insertCount.Load() + m.lookupCount.Load() + m.syncCount.Load()

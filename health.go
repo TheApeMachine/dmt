@@ -40,6 +40,32 @@ type HealthCheck struct {
 	Details     map[string]interface{} `json:"details,omitempty"`
 }
 
+// Clone returns a deep copy of the HealthCheck, ensuring the returned
+// object (and its Details map) can be safely mutated by callers without
+// affecting the original internal state.
+func (hc *HealthCheck) Clone() *HealthCheck {
+	if hc == nil {
+		return nil
+	}
+
+	clone := &HealthCheck{
+		Name:        hc.Name,
+		Status:      hc.Status,
+		Message:     hc.Message,
+		LastChecked: hc.LastChecked,
+		Duration:    hc.Duration,
+	}
+
+	if hc.Details != nil {
+		clone.Details = make(map[string]interface{}, len(hc.Details))
+		for k, v := range hc.Details {
+			clone.Details[k] = v
+		}
+	}
+
+	return clone
+}
+
 /*
 HealthMonitor manages health checks and provides status endpoints.
 It runs periodic health checks and maintains the overall system health status.
@@ -72,6 +98,11 @@ func NewHealthMonitor(config HealthMonitorConfig) *HealthMonitor {
 
 	if config.CheckInterval == 0 {
 		config.CheckInterval = 30 * time.Second
+	}
+
+	// Ensure we always have a non-nil logger to avoid panics where logging is optional
+	if config.Logger == nil {
+		config.Logger = NewNoOpLogger()
 	}
 
 	hm := &HealthMonitor{
@@ -190,9 +221,9 @@ func (hm *HealthMonitor) GetHealthReport() map[string]interface{} {
 	hm.mutex.RLock()
 	defer hm.mutex.RUnlock()
 
-	checks := make(map[string]*HealthCheck)
+	checks := make(map[string]*HealthCheck, len(hm.checks))
 	for name, check := range hm.checks {
-		checks[name] = check
+		checks[name] = check.Clone()
 	}
 
 	return map[string]interface{}{
@@ -204,10 +235,14 @@ func (hm *HealthMonitor) GetHealthReport() map[string]interface{} {
 
 /*
 Close shuts down the health monitor.
+
+Note: hm.cancel must be non-nil and is set by NewHealthMonitor.
 */
 func (hm *HealthMonitor) Close() {
 	hm.cancel()
-	hm.logger.Info("Health monitor stopped")
+	if hm.logger != nil {
+		hm.logger.Info("Health monitor stopped")
+	}
 }
 
 /*
@@ -420,10 +455,41 @@ func StartHealthMonitorServer(addr string, monitor *HealthMonitor) *http.Server 
 		Handler: monitor.HTTPHandler(),
 	}
 
+	// Channel to capture non-graceful server errors (including immediate startup failures)
+	errCh := make(chan error, 1)
+
+	// Serve in background and report non-ErrServerClosed errors
 	go func() {
 		monitor.logger.Info("Starting health monitor server", "addr", addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			// Only report real errors; graceful shutdown returns http.ErrServerClosed
+			errCh <- err
+		}
+	}()
+
+	// Watch for monitor shutdown or server error and cleanly stop the HTTP server
+	go func() {
+		select {
+		case <-monitor.ctx.Done():
+			// Graceful shutdown with timeout when the monitor is closed
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := server.Shutdown(ctx); err != nil && err != http.ErrServerClosed {
+				monitor.logger.Error("Health monitor server shutdown error", "error", err)
+			} else {
+				monitor.logger.Info("Health monitor server stopped")
+			}
+		case err := <-errCh:
+			// Handle immediate startup or runtime failures; ensure server resources are released
 			monitor.logger.Error("Health monitor server error", "error", err)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if sErr := server.Shutdown(ctx); sErr != nil && sErr != http.ErrServerClosed {
+				// If graceful shutdown fails (or server never started), force close
+				if cErr := server.Close(); cErr != nil {
+					monitor.logger.Error("Health monitor server close error", "error", cErr)
+				}
+			}
 		}
 	}()
 

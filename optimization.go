@@ -223,6 +223,9 @@ func (po *PerformanceOptimizer) ApplyOptimization(action *OptimizationAction) er
 	action.AppliedAt = time.Now()
 	action.Result = "Applied successfully"
 
+	// Persist applied action to history
+	po.optimizations = append(po.optimizations, *action)
+
 	return nil
 }
 
@@ -368,12 +371,7 @@ func (po *PerformanceOptimizer) AutoOptimize() error {
 		}
 	}
 
-	// Record into history for observability
-	if applied > 0 {
-		po.mu.Lock()
-		po.optimizations = append(po.optimizations, actions...)
-		po.mu.Unlock()
-	}
+	// History is recorded by ApplyOptimization; avoid double-recording
 
 	return nil
 }

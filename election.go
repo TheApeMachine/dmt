@@ -571,28 +571,29 @@ appendLogEntry adds a new entry to the log.
 It assigns the next available index and the current term to the entry.
 */
 func (e *Election) appendLogEntry(key, value []byte) uint64 {
-	e.logMutex.Lock()
-	defer e.logMutex.Unlock()
-
-	e.lastLogIndex++
-
-	// Make copies of the byte slices to avoid memory reuse issues
+	// Prepare defensive copies
 	keyCopy := make([]byte, len(key))
 	copy(keyCopy, key)
 	valueCopy := make([]byte, len(value))
 	copy(valueCopy, value)
 
+	// Append under logMutex
+	e.logMutex.Lock()
+	// Determine new index based on current log length
+	newIndex := uint64(len(e.log)) + 1
 	entry := RaftLogEntry{
 		Term:  e.getCurrentTerm(),
-		Index: e.lastLogIndex,
+		Index: newIndex,
 		Key:   keyCopy,
 		Value: valueCopy,
 	}
-
 	e.log = append(e.log, entry)
-	e.lastLogTerm = entry.Term
+	e.logMutex.Unlock()
 
-	return e.lastLogIndex
+	// Publish updated log state under logLock to avoid races with readers
+	e.updateLogState(newIndex, entry.Term)
+
+	return newIndex
 }
 
 /*
@@ -654,12 +655,12 @@ func (e *Election) handleAppendEntries(term uint64, _ string, prevLogIndex, prev
 			if existingEntry.Term != entryTerm {
 				// Conflict found, truncate log from this point
 				e.log = e.log[:entryIndex-1]
-				e.lastLogIndex = entryIndex - 1
-				if e.lastLogIndex > 0 {
-					e.lastLogTerm = e.log[e.lastLogIndex-1].Term
-				} else {
-					e.lastLogTerm = 0
+				// Publish updated last index/term via updateLogState
+				var termAfter uint64
+				if entryIndex > 1 {
+					termAfter = e.log[entryIndex-2].Term
 				}
+				e.updateLogState(entryIndex-1, termAfter)
 				break
 			}
 		}
@@ -674,16 +675,25 @@ func (e *Election) handleAppendEntries(term uint64, _ string, prevLogIndex, prev
 			key, _ := entry.Key()
 			value, _ := entry.Value()
 
+			// Defensive copies to avoid Cap'n Proto buffer reuse
+			var keyCopy, valueCopy []byte
+			if len(key) > 0 {
+				keyCopy = append([]byte(nil), key...)
+			}
+			if len(value) > 0 {
+				valueCopy = append([]byte(nil), value...)
+			}
+
 			logEntry := RaftLogEntry{
 				Term:  entry.Term(),
 				Index: entryIndex,
-				Key:   key,
-				Value: value,
+				Key:   keyCopy,
+				Value: valueCopy,
 			}
 
 			e.log = append(e.log, logEntry)
-			e.lastLogIndex = entryIndex
-			e.lastLogTerm = entry.Term()
+			// Immediately publish state under logLock
+			e.updateLogState(entryIndex, entry.Term())
 		}
 	}
 

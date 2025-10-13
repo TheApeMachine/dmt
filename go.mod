@@ -1,6 +1,8 @@
 module github.com/theapemachine/dmt
 
-go 1.22.5
+go 1.22
+
+toolchain go1.22.5
 
 require (
 	capnproto.org/go/capnp/v3 v3.1.0-alpha.1

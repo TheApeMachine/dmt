@@ -114,13 +114,16 @@ func (rt *RegressionTracker) DetectRegressions() ([]RegressionAlert, error) {
 			continue
 		}
 
-		// Sort samples by timestamp
-		sort.Slice(samples, func(i, j int) bool {
-			return samples[i].Timestamp.Before(samples[j].Timestamp)
+		// Make a copy under read lock to avoid mutating shared slice
+		copied := make([]PerformanceSample, len(samples))
+		copy(copied, samples)
+		// Sort the copy by timestamp
+		sort.Slice(copied, func(i, j int) bool {
+			return copied[i].Timestamp.Before(copied[j].Timestamp)
 		})
 
 		// Get baseline (older samples) and recent samples
-		totalSamples := len(samples)
+		totalSamples := len(copied)
 		baselineEnd := totalSamples - rt.thresholds.WindowSize*2
 		recentStart := totalSamples - rt.thresholds.WindowSize
 
@@ -128,8 +131,8 @@ func (rt *RegressionTracker) DetectRegressions() ([]RegressionAlert, error) {
 			continue
 		}
 
-		baselineSamples := samples[:baselineEnd]
-		recentSamples := samples[recentStart:]
+		baselineSamples := copied[:baselineEnd]
+		recentSamples := copied[recentStart:]
 
 		// Calculate baseline metrics
 		baselineLatency := calculateAverageLatency(baselineSamples)

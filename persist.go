@@ -48,6 +48,7 @@ type PersistentStore struct {
 	walWriter  *bufio.Writer
 	walPath    string
 	snapPath   string
+	dir        string // Directory for WAL and snapshots
 	writeMutex sync.Mutex
 	syncChan   chan struct{}
 	lastIndex  uint64
@@ -56,7 +57,11 @@ type PersistentStore struct {
 	snapCount uint64    // Number of entries before triggering snapshot
 	lastSnap  time.Time // Time of last snapshot
 	snapMutex sync.RWMutex
-	closed    bool
+
+	// Concurrency control
+	closedMutex sync.RWMutex
+	closed      bool
+	wg          sync.WaitGroup
 }
 
 /*
@@ -83,11 +88,13 @@ func NewPersistentStore(dir string) (*PersistentStore, error) {
 		walWriter: bufio.NewWriter(walFile),
 		walPath:   walPath,
 		snapPath:  snapPath,
+		dir:       dir,
 		syncChan:  make(chan struct{}, 100),
 		snapCount: 1000, // Create snapshot every 1000 entries
 	}
 
 	// Start background syncing
+	ps.wg.Add(1)
 	go ps.backgroundSync()
 
 	// Load last term/index from WAL
@@ -104,6 +111,13 @@ It writes the operation type, key, and value to the WAL buffer and
 signals the background sync goroutine to flush to disk.
 */
 func (ps *PersistentStore) LogInsert(key, value []byte, term, index uint64) error {
+	ps.closedMutex.RLock()
+	defer ps.closedMutex.RUnlock()
+
+	if ps.closed {
+		return fmt.Errorf("persistent store is closed")
+	}
+
 	ps.writeMutex.Lock()
 	defer ps.writeMutex.Unlock()
 
@@ -140,12 +154,12 @@ func (ps *PersistentStore) LogInsert(key, value []byte, term, index uint64) erro
 	ps.lastTerm = term
 	ps.lastIndex = index
 
-	// Signal for background sync (only if not closed)
-	if !ps.closed {
-		select {
-		case ps.syncChan <- struct{}{}:
-		default:
-		}
+	// Flush immediately for synchronous writes
+	if err := ps.walWriter.Flush(); err != nil {
+		return err
+	}
+	if err := ps.walFile.Sync(); err != nil {
+		return err
 	}
 
 	// Check if snapshot needed
@@ -163,15 +177,14 @@ It listens on the sync channel and ensures that buffered writes are
 persisted to stable storage.
 */
 func (ps *PersistentStore) backgroundSync() {
+	// This function is now a no-op as writes are synchronous.
+	// The waitgroup logic remains to prevent breaking changes in Close().
+	defer ps.wg.Done()
 	for {
 		_, ok := <-ps.syncChan
 		if !ok {
 			return
 		}
-		ps.writeMutex.Lock()
-		ps.walWriter.Flush()
-		ps.walFile.Sync()
-		ps.writeMutex.Unlock()
 	}
 }
 
@@ -180,16 +193,24 @@ Close closes the persistent store, ensuring all buffered data is
 written to disk and resources are properly released.
 */
 func (ps *PersistentStore) Close() error {
-	ps.writeMutex.Lock()
-	defer ps.writeMutex.Unlock()
+	ps.closedMutex.Lock()
 	if ps.closed {
+		ps.closedMutex.Unlock()
 		return nil
 	}
 	ps.closed = true
-	// close channel safely
+	ps.closedMutex.Unlock()
+
+	// Signal the background worker to stop and wait for it
 	close(ps.syncChan)
+	ps.wg.Wait()
+
+	// Final flush and close under lock
+	ps.writeMutex.Lock()
+	defer ps.writeMutex.Unlock()
 
 	if err := ps.walWriter.Flush(); err != nil {
+		ps.walFile.Close() // Best effort
 		return err
 	}
 	return ps.walFile.Close()
@@ -422,6 +443,15 @@ func (ps *PersistentStore) GetLastState() (term, index uint64) {
 func (ps *PersistentStore) UpdateTerm(term uint64) error {
 	ps.writeMutex.Lock()
 	defer ps.writeMutex.Unlock()
+
+	// Check if closed under write lock to avoid races with Close()
+	ps.closedMutex.RLock()
+	if ps.closed {
+		ps.closedMutex.RUnlock()
+		return nil
+	}
+	ps.closedMutex.RUnlock()
+
 	ps.lastTerm = term
 	// Write a snapshot record with new term and current index
 	if err := ps.walWriter.WriteByte(opSnapshot); err != nil {
@@ -433,12 +463,11 @@ func (ps *PersistentStore) UpdateTerm(term uint64) error {
 	if err := binary.Write(ps.walWriter, binary.LittleEndian, ps.lastIndex); err != nil {
 		return err
 	}
-	// Flush in background
-	select {
-	case ps.syncChan <- struct{}{}:
-	default:
+	// Flush immediately to ensure term updates are durable
+	if err := ps.walWriter.Flush(); err != nil {
+		return err
 	}
-	return nil
+	return ps.walFile.Sync()
 }
 
 // LoadSnapshot loads the most recent snapshot and returns the key-value pairs

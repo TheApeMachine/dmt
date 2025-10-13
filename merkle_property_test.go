@@ -86,12 +86,23 @@ func TestMerkleTreeProperties(t *testing.T) {
 				mt1 := NewMerkleTree()
 				mt2 := NewMerkleTree()
 
-				// Generate random data
+				// Generate random data with unique keys
 				numEntries := rng.Intn(config.MaxTreeSize) + 1
 				entries := make([]struct{ key, value []byte }, numEntries)
+				keySet := make(map[string]bool)
 
 				for j := 0; j < numEntries; j++ {
-					entries[j].key = generateRandomBytes(rng, config.MaxKeySize)
+					// Ensure unique keys
+					var key []byte
+					for {
+						key = generateRandomBytes(rng, config.MaxKeySize)
+						keyStr := string(key)
+						if !keySet[keyStr] {
+							keySet[keyStr] = true
+							break
+						}
+					}
+					entries[j].key = key
 					entries[j].value = generateRandomBytes(rng, config.MaxValueSize)
 				}
 

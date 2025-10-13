@@ -67,12 +67,12 @@ func TestPerformanceAnalyzer(t *testing.T) {
 
 					Convey("And operation stats should be recorded", func() {
 						// Check if we have operation stats
-						So(len(report.OperationStats), ShouldBeGreaterThanOrEqualTo, 0)
+						So(len(report.OperationStats), ShouldBeGreaterThan, 0)
 					})
 
 					Convey("And recommendations should be provided", func() {
 						// Should have some recommendations based on the recorded operations
-						So(len(report.Recommendations), ShouldBeGreaterThanOrEqualTo, 0)
+						So(len(report.Recommendations), ShouldBeGreaterThan, 0)
 					})
 				})
 

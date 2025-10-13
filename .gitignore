@@ -1,5 +1,5 @@
-./kiro/
-./go-capnp/
+/kiro/
+/go-capnp/
 .kiro/specs/distributed-kv-fixes/design.md
 
 .kiro/hooks/code-quality-analyzer.kiro.hook

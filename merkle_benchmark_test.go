@@ -33,7 +33,7 @@ func setupMerkleTreePair(config BenchmarkConfig) (*MerkleTree, *MerkleTree) {
 	keys := make([][]byte, config.TreeSize)
 	values := make([][]byte, config.TreeSize)
 
-	for i := range config.TreeSize {
+	for i := 0; i < config.TreeSize; i++ {
 		keys[i] = make([]byte, 0, 32)
 		values[i] = make([]byte, 0, 32)
 		keys[i] = fmt.Appendf(keys[i], "%s%d", config.KeyPrefix, i)
@@ -118,7 +118,7 @@ func BenchmarkMerkleTreeConcurrentAccess(b *testing.B) {
 	values := make([][]byte, 100)
 
 	// Pre-populate
-	for i := range 100 {
+	for i := 0; i < 100; i++ {
 		keys[i] = make([]byte, 0, 16)
 		values[i] = make([]byte, 0, 16)
 		keys[i] = fmt.Appendf(keys[i], "key%d", i)
@@ -162,7 +162,7 @@ func BenchmarkMerkleTreeOperations(b *testing.B) {
 
 			// Pre-populate for operations that need existing data
 			if op.name != "Insert" {
-				for i := range len(keys) {
+				for i := 0; i < len(keys); i++ {
 					mt.Insert(keys[i], values[i])
 				}
 				mt.Rebuild()
@@ -186,7 +186,7 @@ func BenchmarkMerkleTreeMemoryUsage(b *testing.B) {
 				mt := NewMerkleTreeWithLimit(size / 10) // Test with memory limits
 				keys, values := generateTestData(size)
 
-				for j := range len(keys) {
+				for j := 0; j < len(keys); j++ {
 					mt.Insert(keys[j], values[j])
 				}
 				mt.Rebuild()
@@ -248,7 +248,7 @@ func generateTestData(count int) ([][]byte, [][]byte) {
 	keys := make([][]byte, count)
 	values := make([][]byte, count)
 
-	for i := range count {
+	for i := 0; i < count; i++ {
 		keys[i] = make([]byte, 0, 32)
 		values[i] = make([]byte, 0, 32)
 		keys[i] = fmt.Appendf(keys[i], "benchmark-key-%d", i)

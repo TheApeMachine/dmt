@@ -1,9 +1,10 @@
 package dmt
 
 import (
-	"context"
-	"fmt"
-	"sync"
+    "context"
+    "fmt"
+    "sort"
+    "sync"
 )
 
 // BatchOperation represents a single operation in a batch
@@ -102,6 +103,8 @@ func (b *MerkleTreeBatch) executeInsert(key, value []byte) error {
 		return fmt.Errorf("merkle tree not properly initialized")
 	}
 
+	keyHex := fmt.Sprintf("%x", key)
+
 	// Create leaf node
 	leaf := &MerkleNode{
 		Key:   append([]byte(nil), key...),
@@ -109,8 +112,6 @@ func (b *MerkleTreeBatch) executeInsert(key, value []byte) error {
 		Hash:  b.tree.hashKV(key, value),
 	}
 
-	// Store in leaf map
-	keyHex := string(key) // Avoid hex encoding for better performance
 	b.tree.leafMap[keyHex] = leaf
 	b.tree.modified = true
 	return nil
@@ -128,13 +129,18 @@ func (b *MerkleTreeBatch) rebuildUnsafe() {
 		b.tree.nodeCache.Clear()
 	}
 
-	// Build tree (simplified version - full implementation would be in merkle.go)
-	leaves := make([]*MerkleNode, 0, len(b.tree.leafMap))
-	for _, leaf := range b.tree.leafMap {
-		leaves = append(leaves, leaf)
-	}
+    // Build tree consistently with MerkleTree.Rebuild: sort by key for deterministic ordering
+    leaves := make([]*MerkleNode, 0, len(b.tree.leafMap))
+    keys := make([]string, 0, len(b.tree.leafMap))
+    for k := range b.tree.leafMap {
+        keys = append(keys, k)
+    }
+    sort.Strings(keys)
+    for _, k := range keys {
+        leaves = append(leaves, b.tree.leafMap[k])
+    }
 
-	b.tree.Root = b.tree.buildLevel(leaves)
+    b.tree.Root = b.tree.buildLevel(leaves)
 	b.tree.modified = false
 }
 

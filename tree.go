@@ -32,8 +32,7 @@ type Tree struct {
 }
 
 /*
-NewTree creates and returns a new empty Tree instance.
-The underlying radix tree is initialized with no entries.
+NewTree creates a new radix tree with optional persistence.
 */
 func NewTree(persistDir string) (*Tree, error) {
 	var persist *PersistentStore
@@ -134,6 +133,58 @@ func NewTree(persistDir string) (*Tree, error) {
 		"log_index", index)
 
 	return tree, nil
+}
+
+/*
+ReplayWAL replays the write-ahead log to restore the tree's state.
+*/
+func (tree *Tree) ReplayWAL() error {
+	// Load from snapshot first
+	snapshotData, term, index, err := tree.persist.LoadSnapshot()
+	if err != nil {
+		return err
+	}
+	if snapshotData != nil {
+		for key, value := range snapshotData {
+			tree.root, _, _ = tree.root.Insert([]byte(key), value)
+		}
+		tree.term = term
+		tree.logIndex = index
+		tree.logger.Info("Restored from snapshot", "term", term, "index", index, "entries", len(snapshotData))
+	}
+
+	// Replay WAL
+	entries, err := tree.persist.LoadAll()
+	if err != nil {
+		return err
+	}
+
+	replayedCount := 0
+	for _, entry := range entries {
+		if entry.Index <= tree.logIndex {
+			continue // Skip entries already covered by snapshot
+		}
+		switch entry.Op {
+		case opInsert:
+			tree.root, _, _ = tree.root.Insert(entry.Key, entry.Value)
+			tree.term = entry.Term
+			tree.logIndex = entry.Index
+			replayedCount++
+		case opSnapshot:
+			// This is just a term/index marker in the WAL after a snapshot
+			if entry.Term > tree.term {
+				tree.term = entry.Term
+			}
+			if entry.Index > tree.logIndex {
+				tree.logIndex = entry.Index
+			}
+		}
+	}
+	if replayedCount > 0 {
+		tree.logger.Info("Replayed WAL entries", "entries", replayedCount, "final_term", tree.term, "final_index", tree.logIndex)
+	}
+
+	return nil
 }
 
 /*

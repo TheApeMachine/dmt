@@ -132,10 +132,7 @@ func (f *Forest) Close() {
 		f.cancel()
 	}
 
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	// Close network node if it exists
+	// Close network node first to stop all network activity
 	if f.network != nil {
 		if err := f.network.Close(); err != nil {
 			dmtErr, _ := f.errorHandler.HandleError(err, "network_close", nil)
@@ -145,7 +142,10 @@ func (f *Forest) Close() {
 		}
 	}
 
-	// Close the tree
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Now close the tree
 	if f.tree != nil {
 		if err := f.tree.Close(); err != nil {
 			dmtErr, _ := f.errorHandler.HandleError(err, "tree_close", nil)
@@ -165,6 +165,78 @@ func (f *Forest) Close() {
 	}
 
 	f.logger.Info("Forest closed successfully")
+}
+
+/*
+ForceClose performs an aggressive shutdown of the forest.
+This is intended for test scenarios where we need immediate cleanup.
+*/
+func (f *Forest) ForceClose() {
+	f.logger.Info("Force closing forest", "has_tree", f.tree != nil)
+
+	// Cancel context immediately
+	if f.cancel != nil {
+		f.cancel()
+	}
+
+	// Force close network node immediately
+	if f.network != nil {
+		f.network.ForceClose()
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Force close tree immediately
+	if f.tree != nil {
+		f.tree.Close()
+	}
+
+	// Drain updates channel
+	select {
+	case <-f.updates:
+	default:
+	}
+
+	f.logger.Info("Forest force closed successfully")
+}
+
+/*
+Reset re-initializes the forest's tree.
+This is used in testing to simulate a node recovery without tearing down the
+entire network stack.
+*/
+func (f *Forest) Reset() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Close the existing tree
+	if f.tree != nil {
+		if err := f.tree.Close(); err != nil {
+			f.logger.Error("Failed to close existing tree during reset", "error", err)
+			// Continue anyway, as we are trying to recover
+		}
+	}
+
+	var persistDir string
+	if f.tree != nil && f.tree.persist != nil {
+		persistDir = f.tree.persist.dir
+	}
+
+	// Create a new tree
+	tree, err := NewTree(persistDir)
+	if err != nil {
+		return fmt.Errorf("failed to create new tree during reset: %w", err)
+	}
+	f.tree = tree
+
+	// Reset the network node's merkle tree
+	if f.network != nil {
+		f.network.ResetMerkleTree()
+	}
+
+	f.logger.Info("Forest has been reset")
+	return nil
 }
 
 /*

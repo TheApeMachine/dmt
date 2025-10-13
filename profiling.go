@@ -205,6 +205,9 @@ func (pp *PerformanceProfiler) StopProfiling() (*ProfileResult, error) {
 	// Perform analysis
 	pp.performAnalysis(result)
 
+	// Ensure profiling instrumentation is disabled after analysis
+	ensureProfilingDisabled()
+
 	pp.active = false
 	return result, nil
 }
@@ -264,6 +267,13 @@ func (pp *PerformanceProfiler) performAnalysis(result *ProfileResult) {
 	result.Bottlenecks = pp.analyzeBottlenecks()
 	result.Regressions = pp.detectRegressions()
 	result.Recommendations = pp.generateRecommendations(result)
+}
+
+// ensureProfilingDisabled resets global profiling rates to defaults
+func ensureProfilingDisabled() {
+	// Reset block/mutex profiling to avoid overhead after profiling stops
+	runtime.SetBlockProfileRate(0)
+	runtime.SetMutexProfileFraction(0)
 }
 
 const (

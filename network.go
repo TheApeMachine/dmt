@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"capnproto.org/go/capnp/v3"
@@ -414,15 +415,23 @@ func (n *NetworkNode) syncWithPeers() {
 				e := entries.At(i)
 				k, _ := e.Key()
 				v, _ := e.Artifact()
-				// Defensive copies before insert to avoid underlying buffer reuse issues
+				// Defensive copies before apply to avoid underlying buffer reuse issues
 				kCopy := make([]byte, len(k))
 				copy(kCopy, k)
 				vCopy := make([]byte, len(v))
 				copy(vCopy, v)
+
+				// Apply diff entries to the state machine so data becomes available via Get
+				if tree := n.forest.getTree(); tree != nil {
+					tree.Insert(kCopy, vCopy)
+				}
+
+				// Keep Merkle tree in sync
 				_ = n.merkleTree.Insert(kCopy, vCopy)
 				totalBytes += len(k) + len(v)
 			}
-			n.merkleTree.Rebuild()
+			// Recompute Merkle root from the authoritative state
+			n.updateMerkleRoot()
 			n.metrics.RecordSync(time.Since(started), totalBytes)
 		}(peerRef, localRoot, start)
 	}
@@ -544,8 +553,12 @@ func (n *NetworkNode) Insert(ctx context.Context, call RadixRPC_insert) error {
 		if n.election != nil {
 			result.SetTerm(n.election.getCurrentTerm())
 			result.SetLogIndex(n.election.getLastLogIndex())
+		} else {
+			result.SetTerm(0)
+			result.SetLogIndex(0)
 		}
-		return insertErr
+		// Surface failure via result payload; keep RPC successful
+		return nil
 	}
 
 	result.SetSuccess(true)
@@ -707,6 +720,14 @@ func (n *NetworkNode) Recover(ctx context.Context, call RadixRPC_recover) error 
 }
 
 /*
+ResetMerkleTree re-initializes the merkle tree.
+*/
+func (n *NetworkNode) ResetMerkleTree() {
+	n.merkleTree = NewMerkleTree()
+	n.updateMerkleRoot()
+}
+
+/*
 updateMerkleRoot updates the merkle root hash of the tree.
 It rebuilds the merkle tree from the current state of the forest's tree
 to ensure an accurate representation of the data.
@@ -817,7 +838,7 @@ func (n *NetworkNode) ReplicateLogEntry(key []byte, value []byte, logIndex uint6
 	// Use context with timeout for replication
 	ctx, cancel := context.WithTimeout(n.ctx, 5*time.Second)
 	defer cancel()
-
+	var higherTermSeen atomic.Bool
 	// Send Insert RPC to all followers for replication
 	successCount := int32(1) // Count self as success, use atomic for concurrent access
 	successChan := make(chan bool, len(peers))
@@ -846,7 +867,10 @@ func (n *NetworkNode) ReplicateLogEntry(key []byte, value []byte, logIndex uint6
 
 			// Check if follower stepped down due to higher term
 			if result.Term() > currentTerm {
+				// Higher term observed: step down and cancel replication context
 				n.election.stepDown(result.Term())
+				cancel()
+				higherTermSeen.Store(true)
 				successChan <- false
 				return
 			}
@@ -863,6 +887,17 @@ func (n *NetworkNode) ReplicateLogEntry(key []byte, value []byte, logIndex uint6
 				successCount++
 			}
 		case <-ctx.Done():
+			// Drain remaining responses to avoid goroutine leaks
+			for j := i + 1; j < len(peers); j++ {
+				select {
+				case <-successChan:
+				default:
+				}
+			}
+			cancel()
+			if higherTermSeen.Load() {
+				return fmt.Errorf("replication aborted: higher term observed")
+			}
 			return fmt.Errorf("replication timeout: %w", ctx.Err())
 		}
 	}
@@ -1012,38 +1047,132 @@ Close shuts down the network node.
 It properly closes all peer connections and releases resources.
 */
 func (n *NetworkNode) Close() error {
-	n.logger.Info("Closing network node")
+	n.logger.Info("Closing network node", "node_id", n.config.NodeID)
+
+	// Cancel context first to signal all goroutines to stop
 	n.cancel()
 
-	// Stop health monitor
+	// Stop health monitor with timeout
 	if n.healthMonitor != nil {
-		n.healthMonitor.Close()
+		done := make(chan struct{})
+		go func() {
+			n.healthMonitor.Close()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			n.logger.Info("Health monitor close timeout")
+		}
 	}
 
-	// Stop election manager timers
+	// Stop election manager with timeout
 	if n.election != nil {
-		n.election.Close()
+		done := make(chan struct{})
+		go func() {
+			n.election.Close()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			n.logger.Info("Election close timeout")
+		}
 	}
 
+	// Close listener first to stop accepting new connections
 	if n.listener != nil {
 		n.listener.Close()
 	}
 
+	// Force close all peer connections
 	n.peersMutex.Lock()
-	defer n.peersMutex.Unlock()
-
-	for _, p := range n.peers {
+	var wg sync.WaitGroup
+	for addr, p := range n.peers {
 		if p != nil {
+			wg.Add(1)
+			go func(peerConn *peer, peerAddr string) {
+				defer wg.Done()
+
+				// Force close RPC connection
+				if peerConn.rpcConn != nil {
+					peerConn.rpcConn.Close()
+				}
+
+				// Force close network connection
+				if peerConn.conn != nil {
+					peerConn.conn.Close()
+				}
+
+				n.logger.Info("Peer connection closed", "node_id", n.config.NodeID, "peer_addr", peerAddr)
+			}(p, addr)
+		}
+	}
+	n.peersMutex.Unlock()
+
+	// Wait for peer cleanup with timeout
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		n.logger.Info("All peer connections closed", "node_id", n.config.NodeID)
+	case <-time.After(1 * time.Second):
+		n.logger.Info("Peer cleanup timeout, forcing shutdown", "node_id", n.config.NodeID)
+	}
+
+	n.logger.Info("Network node closed successfully", "node_id", n.config.NodeID)
+	return nil
+}
+
+/*
+ForceClose performs an aggressive shutdown of the network node.
+This is intended for test scenarios where we need to ensure immediate cleanup.
+*/
+func (n *NetworkNode) ForceClose() error {
+	n.logger.Info("Force closing network node", "node_id", n.config.NodeID)
+
+	// Cancel context immediately
+	n.cancel()
+
+	// Force close listener immediately
+	if n.listener != nil {
+		n.listener.Close()
+	}
+
+	// Force close all connections immediately without waiting
+	n.peersMutex.Lock()
+	for addr, p := range n.peers {
+		if p != nil {
+			// Close RPC connection immediately
 			if p.rpcConn != nil {
 				p.rpcConn.Close()
 			}
+			// Close network connection immediately
 			if p.conn != nil {
 				p.conn.Close()
 			}
+			n.logger.Debug("Force closed peer connection", "node_id", n.config.NodeID, "peer_addr", addr)
 		}
 	}
+	// Clear peers map
+	n.peers = make(map[string]*peer)
+	n.peersMutex.Unlock()
 
-	n.logger.Info("Network node closed successfully")
+	// Force close health monitor
+	if n.healthMonitor != nil {
+		n.healthMonitor.Close()
+	}
+
+	// Force close election manager
+	if n.election != nil {
+		n.election.Close()
+	}
+
+	n.logger.Info("Network node force closed", "node_id", n.config.NodeID)
 	return nil
 }
 

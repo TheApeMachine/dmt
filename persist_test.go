@@ -5,15 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestNewPersistentStore(t *testing.T) {
 	Convey("Given a temporary directory", t, func() {
-		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
-		defer os.RemoveAll(tmpDir)
+		tmpDir := createUniqueTestDir("radix-test")
+		defer cleanupTestDir(tmpDir)
 
 		Convey("When creating a new persistent store", func() {
 			store, err := NewPersistentStore(tmpDir)
@@ -37,8 +36,8 @@ func TestNewPersistentStore(t *testing.T) {
 
 func TestLogInsert(t *testing.T) {
 	Convey("Given a new persistent store", t, func() {
-		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
-		defer os.RemoveAll(tmpDir)
+		tmpDir := createUniqueTestDir("radix-test")
+		defer cleanupTestDir(tmpDir)
 
 		store, err := NewPersistentStore(tmpDir)
 		So(err, ShouldBeNil)
@@ -64,8 +63,8 @@ func TestLogInsert(t *testing.T) {
 
 func TestLoadLastState(t *testing.T) {
 	Convey("Given a persistent store with existing entries", t, func() {
-		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
-		defer os.RemoveAll(tmpDir)
+		tmpDir := createUniqueTestDir("radix-test")
+		defer cleanupTestDir(tmpDir)
 
 		store, err := NewPersistentStore(tmpDir)
 		So(err, ShouldBeNil)
@@ -105,8 +104,8 @@ func TestLoadLastState(t *testing.T) {
 
 func TestCreateSnapshot(t *testing.T) {
 	Convey("Given a tree with entries", t, func() {
-		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
-		defer os.RemoveAll(tmpDir)
+		tmpDir := createUniqueTestDir("radix-test")
+		defer cleanupTestDir(tmpDir)
 
 		tree, err := NewTree(tmpDir)
 		So(err, ShouldBeNil)
@@ -141,8 +140,8 @@ func TestCreateSnapshot(t *testing.T) {
 
 func TestTruncateWAL(t *testing.T) {
 	Convey("Given a persistent store with a large WAL", t, func() {
-		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
-		defer os.RemoveAll(tmpDir)
+		tmpDir := createUniqueTestDir("radix-test")
+		defer cleanupTestDir(tmpDir)
 
 		store, err := NewPersistentStore(tmpDir)
 		So(err, ShouldBeNil)
@@ -178,8 +177,8 @@ func TestTruncateWAL(t *testing.T) {
 
 func TestGetLastState(t *testing.T) {
 	Convey("Given a persistent store", t, func() {
-		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
-		defer os.RemoveAll(tmpDir)
+		tmpDir := createUniqueTestDir("radix-test")
+		defer cleanupTestDir(tmpDir)
 
 		store, err := NewPersistentStore(tmpDir)
 		So(err, ShouldBeNil)
@@ -204,8 +203,8 @@ func TestGetLastState(t *testing.T) {
 
 func TestWALReplayCorrectness(t *testing.T) {
 	Convey("Given a persistent store with multiple entries", t, func() {
-		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
-		defer os.RemoveAll(tmpDir)
+		tmpDir := createUniqueTestDir("radix-test")
+		defer cleanupTestDir(tmpDir)
 
 		store, err := NewPersistentStore(tmpDir)
 		So(err, ShouldBeNil)
@@ -261,8 +260,8 @@ func TestWALReplayCorrectness(t *testing.T) {
 
 func TestSnapshotCreationAndRecovery(t *testing.T) {
 	Convey("Given a tree with multiple entries", t, func() {
-		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
-		defer os.RemoveAll(tmpDir)
+		tmpDir := createUniqueTestDir("radix-test")
+		defer cleanupTestDir(tmpDir)
 
 		tree, err := NewTree(tmpDir)
 		So(err, ShouldBeNil)
@@ -314,8 +313,8 @@ func TestSnapshotWithVariousTreeSizes(t *testing.T) {
 
 		for _, size := range sizes {
 			Convey(fmt.Sprintf("When testing with %d entries", size), func() {
-				tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("radix-test-%d-%s", size, time.Now().Format("20060102150405")))
-				defer os.RemoveAll(tmpDir)
+				tmpDir := createUniqueTestDir(fmt.Sprintf("radix-test-%d", size))
+				defer cleanupTestDir(tmpDir)
 
 				tree, err := NewTree(tmpDir)
 				So(err, ShouldBeNil)
@@ -353,8 +352,8 @@ func TestSnapshotWithVariousTreeSizes(t *testing.T) {
 
 func TestTermPersistenceAcrossRestarts(t *testing.T) {
 	Convey("Given a tree with term updates", t, func() {
-		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
-		defer os.RemoveAll(tmpDir)
+		tmpDir := createUniqueTestDir("radix-test")
+		defer cleanupTestDir(tmpDir)
 
 		tree, err := NewTree(tmpDir)
 		So(err, ShouldBeNil)
@@ -390,8 +389,8 @@ func TestTermPersistenceAcrossRestarts(t *testing.T) {
 
 func TestMixedSnapshotAndWALRecovery(t *testing.T) {
 	Convey("Given a tree with snapshot and subsequent WAL entries", t, func() {
-		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
-		defer os.RemoveAll(tmpDir)
+		tmpDir := createUniqueTestDir("radix-test")
+		defer cleanupTestDir(tmpDir)
 
 		tree, err := NewTree(tmpDir)
 		So(err, ShouldBeNil)
