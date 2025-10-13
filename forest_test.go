@@ -25,15 +25,14 @@ func TestNewForest(t *testing.T) {
 
 			Convey("Then it should be properly initialized", func() {
 				So(forest, ShouldNotBeNil)
-				So(forest.trees, ShouldNotBeNil)
 				So(forest.updates, ShouldNotBeNil)
 				So(forest.ctx, ShouldNotBeNil)
 				So(forest.cancel, ShouldNotBeNil)
 			})
 
-			Convey("And it should have one initial tree", func() {
-				So(len(forest.trees), ShouldEqual, 1)
-				So(forest.trees[0], ShouldNotBeNil)
+			Convey("And it should have one tree", func() {
+				tree := forest.GetTree()
+				So(tree, ShouldNotBeNil)
 			})
 		})
 	})
@@ -71,8 +70,8 @@ func TestForestOperations(t *testing.T) {
 	})
 }
 
-func TestForestSynchronization(t *testing.T) {
-	Convey("Given a forest with multiple trees", t, func() {
+func TestForestSingleTree(t *testing.T) {
+	Convey("Given a forest with a single tree", t, func() {
 		tmpDir := filepath.Join(os.TempDir(), "radix-test-"+time.Now().Format("20060102150405"))
 		defer os.RemoveAll(tmpDir)
 
@@ -80,49 +79,43 @@ func TestForestSynchronization(t *testing.T) {
 		So(err, ShouldBeNil)
 		defer forest.Close()
 
-		// Add a second tree
-		tree2, err := NewTree("")
-		So(err, ShouldBeNil)
-		forest.AddTree(tree2)
-
 		Convey("When inserting data", func() {
-			forest.Insert([]byte("sync-key"), []byte("sync-value"))
+			forest.Insert([]byte("single-key"), []byte("single-value"))
 
-			// Wait for sync to complete
-			time.Sleep(100 * time.Millisecond)
+			Convey("Then the tree should have the data", func() {
+				value, exists := forest.Get([]byte("single-key"))
+				So(exists, ShouldBeTrue)
+				So(value, ShouldResemble, []byte("single-value"))
 
-			Convey("Then all trees should have the data", func() {
-				for _, tree := range forest.trees {
-					value, exists := tree.Get([]byte("sync-key"))
-					So(exists, ShouldBeTrue)
-					So(value, ShouldResemble, []byte("sync-value"))
-				}
+				// Verify the underlying tree also has the data
+				tree := forest.GetTree()
+				So(tree, ShouldNotBeNil)
+				treeValue, treeExists := tree.Get([]byte("single-key"))
+				So(treeExists, ShouldBeTrue)
+				So(treeValue, ShouldResemble, []byte("single-value"))
 			})
 		})
 	})
 }
 
-func TestForestPerformance(t *testing.T) {
-	Convey("Given a forest with multiple trees", t, func() {
+func TestForestTreeAccess(t *testing.T) {
+	Convey("Given a forest with a single tree", t, func() {
 		forest, err := NewForest(ForestConfig{})
 		So(err, ShouldBeNil)
 		defer forest.Close()
 
-		// Add trees with different simulated performance characteristics
-		tree1, err := NewTree("")
-		So(err, ShouldBeNil)
-		tree2, err := NewTree("")
-		So(err, ShouldBeNil)
-
-		forest.AddTree(tree1)
-		forest.AddTree(tree2)
-
-		Convey("When getting the fastest tree", func() {
-			fastestTree := forest.getFastestTree()
+		Convey("When getting the tree", func() {
+			tree := forest.GetTree()
 
 			Convey("Then it should return a valid tree", func() {
-				So(fastestTree, ShouldNotBeNil)
-				So(fastestTree.AVG(), ShouldBeGreaterThanOrEqualTo, 0)
+				So(tree, ShouldNotBeNil)
+				So(tree.AVG(), ShouldBeGreaterThanOrEqualTo, 0)
+			})
+
+			Convey("And the internal getTree method should work", func() {
+				internalTree := forest.getTree()
+				So(internalTree, ShouldNotBeNil)
+				So(internalTree, ShouldEqual, tree)
 			})
 		})
 	})
@@ -151,18 +144,25 @@ func TestForestNetworking(t *testing.T) {
 		})
 
 		Convey("When inserting data with networking enabled", func() {
-			forest.Insert([]byte("network-key"), []byte("network-value"))
+			// Wait for the single node to become leader
+			time.Sleep(500 * time.Millisecond)
 
-			Convey("Then the network node should broadcast the insert", func() {
+			err := forest.Insert([]byte("network-key"), []byte("network-value"))
+			So(err, ShouldBeNil)
+
+			Convey("Then the data should be stored locally", func() {
+				// Wait for apply loop to process the committed entry
+				time.Sleep(100 * time.Millisecond)
+
 				// Verify local insertion worked
 				value, exists := forest.Get([]byte("network-key"))
 				So(exists, ShouldBeTrue)
 				So(value, ShouldResemble, []byte("network-value"))
 
-				// Network metrics should be updated
+				// For single-node cluster, no network traffic is expected
+				// Network metrics would only be updated in multi-node clusters
 				metrics := forest.network.GetMetrics()
-				networkStats := metrics["network"].(map[string]interface{})
-				So(networkStats["bytes_tx"], ShouldBeGreaterThan, 0)
+				So(metrics, ShouldNotBeNil)
 			})
 		})
 	})
@@ -184,10 +184,7 @@ func TestForestClose(t *testing.T) {
 		forest, err := NewForest(config)
 		So(err, ShouldBeNil)
 
-		// Add additional tree
-		tree2, err := NewTree("")
-		So(err, ShouldBeNil)
-		forest.AddTree(tree2)
+		// Forest now manages a single tree, no need to add additional trees
 
 		Convey("When closing the forest", func() {
 			forest.Close()

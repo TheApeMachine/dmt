@@ -9,7 +9,6 @@ import (
 	schemas "capnproto.org/go/capnp/v3/schemas"
 	server "capnproto.org/go/capnp/v3/server"
 	context "context"
-	datura "github.com/theapemachine/caramba/pkg/datura"
 	strconv "strconv"
 )
 
@@ -410,28 +409,17 @@ func (s InsertPayload) SetKey(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
-func (s InsertPayload) Artifact() (datura.Artifact, error) {
+func (s InsertPayload) Artifact() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(1)
-	return datura.Artifact(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
 func (s InsertPayload) HasArtifact() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s InsertPayload) SetArtifact(v datura.Artifact) error {
-	return capnp.Struct(s).SetPtr(1, capnp.Struct(v).ToPtr())
-}
-
-// NewArtifact sets the artifact field to a newly
-// allocated datura.Artifact struct, preferring placement in s's segment.
-func (s InsertPayload) NewArtifact() (datura.Artifact, error) {
-	ss, err := datura.NewArtifact(capnp.Struct(s).Segment())
-	if err != nil {
-		return datura.Artifact{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s InsertPayload) SetArtifact(v []byte) error {
+	return capnp.Struct(s).SetData(1, v)
 }
 
 func (s InsertPayload) MerkleProof() (capnp.DataList, error) {
@@ -488,9 +476,6 @@ type InsertPayload_Future struct{ *capnp.Future }
 func (f InsertPayload_Future) Struct() (InsertPayload, error) {
 	p, err := f.Future.Ptr()
 	return InsertPayload(p.Struct()), err
-}
-func (p InsertPayload_Future) Artifact() datura.Artifact_Future {
-	return datura.Artifact_Future{Future: p.Future.Field(1, nil)}
 }
 
 type SyncPayload capnp.Struct
@@ -692,28 +677,17 @@ func (s SyncEntry) SetKey(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
-func (s SyncEntry) Artifact() (datura.Artifact, error) {
+func (s SyncEntry) Artifact() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(1)
-	return datura.Artifact(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
 func (s SyncEntry) HasArtifact() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s SyncEntry) SetArtifact(v datura.Artifact) error {
-	return capnp.Struct(s).SetPtr(1, capnp.Struct(v).ToPtr())
-}
-
-// NewArtifact sets the artifact field to a newly
-// allocated datura.Artifact struct, preferring placement in s's segment.
-func (s SyncEntry) NewArtifact() (datura.Artifact, error) {
-	ss, err := datura.NewArtifact(capnp.Struct(s).Segment())
-	if err != nil {
-		return datura.Artifact{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s SyncEntry) SetArtifact(v []byte) error {
+	return capnp.Struct(s).SetData(1, v)
 }
 
 func (s SyncEntry) Term() uint64 {
@@ -747,9 +721,6 @@ type SyncEntry_Future struct{ *capnp.Future }
 func (f SyncEntry_Future) Struct() (SyncEntry, error) {
 	p, err := f.Future.Ptr()
 	return SyncEntry(p.Struct()), err
-}
-func (p SyncEntry_Future) Artifact() datura.Artifact_Future {
-	return datura.Artifact_Future{Future: p.Future.Field(1, nil)}
 }
 
 type ProofPayload capnp.Struct
@@ -1240,6 +1211,249 @@ func (f HeartbeatPayload_Future) Struct() (HeartbeatPayload, error) {
 	return HeartbeatPayload(p.Struct()), err
 }
 
+type AppendEntriesPayload capnp.Struct
+
+// AppendEntriesPayload_TypeID is the unique identifier for the type AppendEntriesPayload.
+const AppendEntriesPayload_TypeID = 0xc17689b35ff9b5e9
+
+func NewAppendEntriesPayload(s *capnp.Segment) (AppendEntriesPayload, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 2})
+	return AppendEntriesPayload(st), err
+}
+
+func NewRootAppendEntriesPayload(s *capnp.Segment) (AppendEntriesPayload, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 2})
+	return AppendEntriesPayload(st), err
+}
+
+func ReadRootAppendEntriesPayload(msg *capnp.Message) (AppendEntriesPayload, error) {
+	root, err := msg.Root()
+	return AppendEntriesPayload(root.Struct()), err
+}
+
+func (s AppendEntriesPayload) String() string {
+	str, _ := text.Marshal(0xc17689b35ff9b5e9, capnp.Struct(s))
+	return str
+}
+
+func (s AppendEntriesPayload) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (AppendEntriesPayload) DecodeFromPtr(p capnp.Ptr) AppendEntriesPayload {
+	return AppendEntriesPayload(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s AppendEntriesPayload) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s AppendEntriesPayload) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s AppendEntriesPayload) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s AppendEntriesPayload) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s AppendEntriesPayload) Term() uint64 {
+	return capnp.Struct(s).Uint64(0)
+}
+
+func (s AppendEntriesPayload) SetTerm(v uint64) {
+	capnp.Struct(s).SetUint64(0, v)
+}
+
+func (s AppendEntriesPayload) LeaderId() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s AppendEntriesPayload) HasLeaderId() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s AppendEntriesPayload) LeaderIdBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s AppendEntriesPayload) SetLeaderId(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s AppendEntriesPayload) PrevLogIndex() uint64 {
+	return capnp.Struct(s).Uint64(8)
+}
+
+func (s AppendEntriesPayload) SetPrevLogIndex(v uint64) {
+	capnp.Struct(s).SetUint64(8, v)
+}
+
+func (s AppendEntriesPayload) PrevLogTerm() uint64 {
+	return capnp.Struct(s).Uint64(16)
+}
+
+func (s AppendEntriesPayload) SetPrevLogTerm(v uint64) {
+	capnp.Struct(s).SetUint64(16, v)
+}
+
+func (s AppendEntriesPayload) Entries() (LogEntry_List, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return LogEntry_List(p.List()), err
+}
+
+func (s AppendEntriesPayload) HasEntries() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s AppendEntriesPayload) SetEntries(v LogEntry_List) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewEntries sets the entries field to a newly
+// allocated LogEntry_List, preferring placement in s's segment.
+func (s AppendEntriesPayload) NewEntries(n int32) (LogEntry_List, error) {
+	l, err := NewLogEntry_List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return LogEntry_List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
+}
+func (s AppendEntriesPayload) LeaderCommit() uint64 {
+	return capnp.Struct(s).Uint64(24)
+}
+
+func (s AppendEntriesPayload) SetLeaderCommit(v uint64) {
+	capnp.Struct(s).SetUint64(24, v)
+}
+
+// AppendEntriesPayload_List is a list of AppendEntriesPayload.
+type AppendEntriesPayload_List = capnp.StructList[AppendEntriesPayload]
+
+// NewAppendEntriesPayload creates a new list of AppendEntriesPayload.
+func NewAppendEntriesPayload_List(s *capnp.Segment, sz int32) (AppendEntriesPayload_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 32, PointerCount: 2}, sz)
+	return capnp.StructList[AppendEntriesPayload](l), err
+}
+
+// AppendEntriesPayload_Future is a wrapper for a AppendEntriesPayload promised by a client call.
+type AppendEntriesPayload_Future struct{ *capnp.Future }
+
+func (f AppendEntriesPayload_Future) Struct() (AppendEntriesPayload, error) {
+	p, err := f.Future.Ptr()
+	return AppendEntriesPayload(p.Struct()), err
+}
+
+type LogEntry capnp.Struct
+
+// LogEntry_TypeID is the unique identifier for the type LogEntry.
+const LogEntry_TypeID = 0xfceb52b5a621e4a8
+
+func NewLogEntry(s *capnp.Segment) (LogEntry, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 2})
+	return LogEntry(st), err
+}
+
+func NewRootLogEntry(s *capnp.Segment) (LogEntry, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 2})
+	return LogEntry(st), err
+}
+
+func ReadRootLogEntry(msg *capnp.Message) (LogEntry, error) {
+	root, err := msg.Root()
+	return LogEntry(root.Struct()), err
+}
+
+func (s LogEntry) String() string {
+	str, _ := text.Marshal(0xfceb52b5a621e4a8, capnp.Struct(s))
+	return str
+}
+
+func (s LogEntry) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (LogEntry) DecodeFromPtr(p capnp.Ptr) LogEntry {
+	return LogEntry(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s LogEntry) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s LogEntry) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s LogEntry) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s LogEntry) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s LogEntry) Term() uint64 {
+	return capnp.Struct(s).Uint64(0)
+}
+
+func (s LogEntry) SetTerm(v uint64) {
+	capnp.Struct(s).SetUint64(0, v)
+}
+
+func (s LogEntry) Index() uint64 {
+	return capnp.Struct(s).Uint64(8)
+}
+
+func (s LogEntry) SetIndex(v uint64) {
+	capnp.Struct(s).SetUint64(8, v)
+}
+
+func (s LogEntry) Key() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s LogEntry) HasKey() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s LogEntry) SetKey(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
+
+func (s LogEntry) Value() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return []byte(p.Data()), err
+}
+
+func (s LogEntry) HasValue() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s LogEntry) SetValue(v []byte) error {
+	return capnp.Struct(s).SetData(1, v)
+}
+
+// LogEntry_List is a list of LogEntry.
+type LogEntry_List = capnp.StructList[LogEntry]
+
+// NewLogEntry creates a new list of LogEntry.
+func NewLogEntry_List(s *capnp.Segment, sz int32) (LogEntry_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 2}, sz)
+	return capnp.StructList[LogEntry](l), err
+}
+
+// LogEntry_Future is a wrapper for a LogEntry promised by a client call.
+type LogEntry_Future struct{ *capnp.Future }
+
+func (f LogEntry_Future) Struct() (LogEntry, error) {
+	p, err := f.Future.Ptr()
+	return LogEntry(p.Struct()), err
+}
+
 type RadixRPC capnp.Client
 
 // RadixRPC_TypeID is the unique identifier for the type RadixRPC.
@@ -1251,7 +1465,7 @@ func (c RadixRPC) Insert(ctx context.Context, params func(RadixRPC_insert_Params
 		Method: capnp.Method{
 			InterfaceID:   0xd39c0255f77a7458,
 			MethodID:      0,
-			InterfaceName: "pkg/radix/radix.capnp:RadixRPC",
+			InterfaceName: "radix.capnp:RadixRPC",
 			MethodName:    "insert",
 		},
 	}
@@ -1271,7 +1485,7 @@ func (c RadixRPC) Sync(ctx context.Context, params func(RadixRPC_sync_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0xd39c0255f77a7458,
 			MethodID:      1,
-			InterfaceName: "pkg/radix/radix.capnp:RadixRPC",
+			InterfaceName: "radix.capnp:RadixRPC",
 			MethodName:    "sync",
 		},
 	}
@@ -1291,7 +1505,7 @@ func (c RadixRPC) Recover(ctx context.Context, params func(RadixRPC_recover_Para
 		Method: capnp.Method{
 			InterfaceID:   0xd39c0255f77a7458,
 			MethodID:      2,
-			InterfaceName: "pkg/radix/radix.capnp:RadixRPC",
+			InterfaceName: "radix.capnp:RadixRPC",
 			MethodName:    "recover",
 		},
 	}
@@ -1311,7 +1525,7 @@ func (c RadixRPC) RequestVote(ctx context.Context, params func(RadixRPC_requestV
 		Method: capnp.Method{
 			InterfaceID:   0xd39c0255f77a7458,
 			MethodID:      3,
-			InterfaceName: "pkg/radix/radix.capnp:RadixRPC",
+			InterfaceName: "radix.capnp:RadixRPC",
 			MethodName:    "requestVote",
 		},
 	}
@@ -1331,7 +1545,7 @@ func (c RadixRPC) Heartbeat(ctx context.Context, params func(RadixRPC_heartbeat_
 		Method: capnp.Method{
 			InterfaceID:   0xd39c0255f77a7458,
 			MethodID:      4,
-			InterfaceName: "pkg/radix/radix.capnp:RadixRPC",
+			InterfaceName: "radix.capnp:RadixRPC",
 			MethodName:    "heartbeat",
 		},
 	}
@@ -1342,6 +1556,26 @@ func (c RadixRPC) Heartbeat(ctx context.Context, params func(RadixRPC_heartbeat_
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
 	return RadixRPC_heartbeat_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c RadixRPC) AppendEntries(ctx context.Context, params func(RadixRPC_appendEntries_Params) error) (RadixRPC_appendEntries_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xd39c0255f77a7458,
+			MethodID:      5,
+			InterfaceName: "radix.capnp:RadixRPC",
+			MethodName:    "appendEntries",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 32, PointerCount: 2}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(RadixRPC_appendEntries_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return RadixRPC_appendEntries_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -1427,6 +1661,8 @@ type RadixRPC_Server interface {
 	RequestVote(context.Context, RadixRPC_requestVote) error
 
 	Heartbeat(context.Context, RadixRPC_heartbeat) error
+
+	AppendEntries(context.Context, RadixRPC_appendEntries) error
 }
 
 // RadixRPC_NewServer creates a new Server from an implementation of RadixRPC_Server.
@@ -1445,14 +1681,14 @@ func RadixRPC_ServerToClient(s RadixRPC_Server) RadixRPC {
 // This can be used to create a more complicated Server.
 func RadixRPC_Methods(methods []server.Method, s RadixRPC_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 5)
+		methods = make([]server.Method, 0, 6)
 	}
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd39c0255f77a7458,
 			MethodID:      0,
-			InterfaceName: "pkg/radix/radix.capnp:RadixRPC",
+			InterfaceName: "radix.capnp:RadixRPC",
 			MethodName:    "insert",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1464,7 +1700,7 @@ func RadixRPC_Methods(methods []server.Method, s RadixRPC_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0xd39c0255f77a7458,
 			MethodID:      1,
-			InterfaceName: "pkg/radix/radix.capnp:RadixRPC",
+			InterfaceName: "radix.capnp:RadixRPC",
 			MethodName:    "sync",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1476,7 +1712,7 @@ func RadixRPC_Methods(methods []server.Method, s RadixRPC_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0xd39c0255f77a7458,
 			MethodID:      2,
-			InterfaceName: "pkg/radix/radix.capnp:RadixRPC",
+			InterfaceName: "radix.capnp:RadixRPC",
 			MethodName:    "recover",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1488,7 +1724,7 @@ func RadixRPC_Methods(methods []server.Method, s RadixRPC_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0xd39c0255f77a7458,
 			MethodID:      3,
-			InterfaceName: "pkg/radix/radix.capnp:RadixRPC",
+			InterfaceName: "radix.capnp:RadixRPC",
 			MethodName:    "requestVote",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1500,11 +1736,23 @@ func RadixRPC_Methods(methods []server.Method, s RadixRPC_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0xd39c0255f77a7458,
 			MethodID:      4,
-			InterfaceName: "pkg/radix/radix.capnp:RadixRPC",
+			InterfaceName: "radix.capnp:RadixRPC",
 			MethodName:    "heartbeat",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
 			return s.Heartbeat(ctx, RadixRPC_heartbeat{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xd39c0255f77a7458,
+			MethodID:      5,
+			InterfaceName: "radix.capnp:RadixRPC",
+			MethodName:    "appendEntries",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.AppendEntries(ctx, RadixRPC_appendEntries{call})
 		},
 	})
 
@@ -1596,6 +1844,23 @@ func (c RadixRPC_heartbeat) AllocResults() (RadixRPC_heartbeat_Results, error) {
 	return RadixRPC_heartbeat_Results(r), err
 }
 
+// RadixRPC_appendEntries holds the state for a server call to RadixRPC.appendEntries.
+// See server.Call for documentation.
+type RadixRPC_appendEntries struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c RadixRPC_appendEntries) Args() RadixRPC_appendEntries_Params {
+	return RadixRPC_appendEntries_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c RadixRPC_appendEntries) AllocResults() (RadixRPC_appendEntries_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return RadixRPC_appendEntries_Results(r), err
+}
+
 // RadixRPC_List is a list of RadixRPC.
 type RadixRPC_List = capnp.CapList[RadixRPC]
 
@@ -1665,28 +1930,17 @@ func (s RadixRPC_insert_Params) SetKey(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
-func (s RadixRPC_insert_Params) Artifact() (datura.Artifact, error) {
+func (s RadixRPC_insert_Params) Artifact() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(1)
-	return datura.Artifact(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
 func (s RadixRPC_insert_Params) HasArtifact() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s RadixRPC_insert_Params) SetArtifact(v datura.Artifact) error {
-	return capnp.Struct(s).SetPtr(1, capnp.Struct(v).ToPtr())
-}
-
-// NewArtifact sets the artifact field to a newly
-// allocated datura.Artifact struct, preferring placement in s's segment.
-func (s RadixRPC_insert_Params) NewArtifact() (datura.Artifact, error) {
-	ss, err := datura.NewArtifact(capnp.Struct(s).Segment())
-	if err != nil {
-		return datura.Artifact{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s RadixRPC_insert_Params) SetArtifact(v []byte) error {
+	return capnp.Struct(s).SetData(1, v)
 }
 
 func (s RadixRPC_insert_Params) Term() uint64 {
@@ -1720,9 +1974,6 @@ type RadixRPC_insert_Params_Future struct{ *capnp.Future }
 func (f RadixRPC_insert_Params_Future) Struct() (RadixRPC_insert_Params, error) {
 	p, err := f.Future.Ptr()
 	return RadixRPC_insert_Params(p.Struct()), err
-}
-func (p RadixRPC_insert_Params_Future) Artifact() datura.Artifact_Future {
-	return datura.Artifact_Future{Future: p.Future.Field(1, nil)}
 }
 
 type RadixRPC_insert_Results capnp.Struct
@@ -2537,119 +2788,351 @@ func (f RadixRPC_heartbeat_Results_Future) Struct() (RadixRPC_heartbeat_Results,
 	return RadixRPC_heartbeat_Results(p.Struct()), err
 }
 
-const schema_d3c5d01f75666abd = "x\xda\xd4Wml\x1cW\x15\xbd\xe7\xbd]\x8f\xedz" +
-	"?\xc6k\"ZQ\x99F1m\\\xdc\x0f'\x91Z" +
-	"\x0b\xc9nhhmb\xb1o\x9b\xd0$\x0a\xa0\xb1w" +
-	"\xecl\xe2\xdduf\xc6\xa9\xb7\xb48D\xb5h\xab\x08" +
-	"\xd5\xa1A$\xa4\xd0F1\x0aP F\x94/5\xa2" +
-	"\xaaT\x11$\xa0\xa0\xaaBB5\x1f\x95\xdaP\x84\x85" +
-	"*\x02\x95\x003\xe8\xce\xcc\xee\x8c7\xd9\xc4\xb4\x08\x89" +
-	"_\x1e\xef\xdcy\xef\xdcs\xce\xbd\xf7\xbd[\xbe\x17\x1f" +
-	"\x88\xdd\x9a\xb8\xb7\x95\x84\x9a\x8e7\xb9/\xdf|\xd0\xf9" +
-	"\xe4\xe0+\x9f!\xb5\x06\xd2=\xbbwl\xaa\xf3\x17/" +
-	"\xbcDqhD\x1b\xf4\xf8\x102]q\x8d(s]" +
-	"\xfc<\xe1\xb7?\x9a^~s\xee\xfa#z'(\x08" +
-	"A\xd3\xfd d\x12M\xfd\x04\xf7\xa7#\xa7\x97\x8a\x7f" +
-	"\xf8\xf9\x11R\x9d\x10Dq\xc1\x11=M{9\xe2\xf6" +
-	"\xa6\xf3\x04\xf7\xd1\xb1\xed\xbfY\xbfp\xc7\xe7\x82\x88\x18" +
-	"\x07\xbcK;\xce\x01]\xda}\x04w\xef\xc1\xc5\xd7_" +
-	"\x7f\xf9\x03\xc7)\xb2\xc7\xac6\xc2\x01s\x1a\xef\xf1\xe0" +
-	"_>\x12\x9bM\xce\x1e\xe7\x15d\xb0\xc2\x82fq\xc0" +
-	"Y\xed[\x04\xf7\xe9\x1f\x7f\xfe\xe8\xce]\xc6\x979#" +
-	"\x11\xc9\xc8\x03\xb3\xb3Y c6sFF3\x03z" +
-	"\x1c\x8f]\xd0>5\xf6\xb5(\xa0\xdb[\x1e\xe5\xe5\x06" +
-	"[\x18\xd0\x9fSG\xe7\xfa\x0f}\xf7\x99jN\x1e\xa2" +
-	"\xf9\x96]\x1c\xb1\xd0\xc2\x1b\x1e\xbd\xe1\x97\xbf\x7f\xe8\xbd" +
-	"\x17~\xc0\x115\xcc\xaa\xf5\x10G|\xac\x95\xd78\xf7" +
-	"\xa1\x8d\x7f\xfa\xddc\xc9\x1f\x92\xbe\x06\xf5\x1c\x9fm\xed" +
-	"F\xe6g\xad\x8c\xe8'\xad\x9c\xe0\x17\xfbw\x9f\xbb\xf0" +
-	"\xd9\xef?[\x8f_r\xf4\x9b\xadk\x91\xc1U\xfc\xb8" +
-	"\xdc\xda\x09\x82\xfb\xb7\xb6_\xff\xaa\xaf\xe9\xc6\xb3+\xf0" +
-	"\xado\xf3\x08\xd9\xd4\xc6\xf8\xae^z\xe4\x85\xdc\xfb\x86" +
-	"\x9e\xab\xdb\xdd[o\xb1\xed\x1ad\x96\xdax\xf77\xbc" +
-	"\xe0\xe5\xdc\xc7\x8fm\xfc\xca\xc9\xe7x\xf7\x8b\xb0\xce%" +
-	"\xfa\x90y*\xc1\xd1O$8\xb1?\xce\x17^\x99\xb9" +
-	"\xe7\xb5\xe7I_\x13\x81J\xd8\xb0\x9chG&\x91\xe4" +
-	"\xc8\x96\xe4\x0c\xc1\xfd\xfa\xf3\x9fx\xf1K\x85\x91su" +
-	"\xebn\x81\x16\x076lI^\x83\xcc\xf6\xa4G\\\xf2" +
-	"^Nki1\xde\xf5\xea\xa9\x91\x17\xeb@{\"\xce" +
-	"\xa7\xda\x91y&\xc5\x8b/\xa4\x18\xc6\x0e\xe7\xfe\xb7\xb6" +
-	"\x8b\x13/\x91\xbeFFad\xaeM\xff=\xb3>\xcd" +
-	"\xdft\xa5\xefB\xe6\xaf\xfc\xe8n\x18\xbe\xed\xaa\xa1\xc3" +
-	"\x87\x17/I\xf0b\xba\x1d\x99%\xef\x937\xd2\x1e\xc1" +
-	"\xdf\xee[:\xb4\xbf\xfd\xd5\x0b\x81\xe1|&\xaek?" +
-	"\xc2\x04\xdf\xda~\x9e\xf2\xee\xe4\xbe\xf1\x9b-#_\x88" +
-	"M{\x7f\xa6o\x1a5&K\x93}9s\xff\x94i" +
-	";\x1f-;f\xd6\xa8L\x94\x8d<Q\x16Pi\x19" +
-	"#\x8a\x81H7\xba\x89\xd4n\x09\xb5G\x00\xe8`\xf7" +
-	"\xe8\xe6\x08\x91\xcaK\xa8I\x01]\xa0\x83E\xd5\x8b{" +
-	"\x89\xd4\x84\x84\x9a\x16\xd0\xa5\xe8` \xfa\x14G:\x12" +
-	"\xea\xa0@\xca1\xad\"ZH\xa0\x85\xe0\x8e\x1a\xa5|" +
-	"!o8\xa4\x99\x83y\xb4\x91@\x1b\xc1\x9d0lg" +
-	"ky|\x90R\xa5\xbc9]\x0b\x0e~\xdeFZt" +
-	"\x89F9\xf1s.\xfb\xc1\x9b,s\xb4|\xc0\xb4\xd6" +
-	"\xe5\xfaM{j\xc2\xb1U\xac\x96U\xa2\x97H5K" +
-	"\xa8\x0e\x81N\xdb1\x1c\x13\xe9\x90t\x02\xd2\xabX\xbf" +
-	"P\xb2M\xcbY\x975R\x96Q\xb4\xa3\x9c\xad\x0d9" +
-	"\xd3k\xa4\x0d\x85\xa4A\x04\x9c1\xb9{$\x94\xc3\x9c" +
-	"\xc1\xe7l?\x07NJ\xa8\x07\x04\xb4}f\x05\x09\x12" +
-	"H\x10\\\xc3r\x0ac\xc6\xa8CDH\xbf\xf5\xda\xd4" +
-	"7\x937\xb6,\xf8XWr;Q\x1e\x1fd\xfe8" +
-	"\xb0\x9e\xacxC\xb2jNX\x97c\xbe\xa4c\xab\xe6" +
-	"ZJ\xeb\x19\xe9:\x09u\x0b\xa74\xe0\xa7\xd4\xc3\xea" +
-	"\xbe_B\xddV\xaf\xee\x81\xb2c\xdee\x19%\xd2\x1c" +
-	"3\x0f\x90\x00VA\xa8])\x8dz\x9bkuju" +
-	"\x87j\xa5\xf2\x85\xb1\xb1\xb7/V\xce\xec\xf4\xbd\xd0V" +
-	"[}\xcbf\"5 \xa1\xb6F\xd4\x1a\xe4-\xef\x94" +
-	"PY\xb6x \xd70+\xb3UB\xed\x10\x98\xb1\xa7" +
-	"FGM\xdb\xae&\xb7z\x05\xe4J\x84\xf7TJ\xa3" +
-	"[J\x8eU\xa9/\xbcwf\xa2\xde\xb0\x1a\xdf\x96\x89" +
-	":\x0b+*\xf0J\xf6\xd9c\x1a\x963b\x1a\x8eo" +
-	"\x1e\xc7\xf6\x14\xbb\xbc{\x98\xf7\x1b$\xd4\xc6:\xf7\xd4" +
-	"S\xbb:\xdfd\x0d\xcb\x90\xc5\x15\xc2\xee\x0a5\xac\x12" +
-	"8\xccH\xee\x96P\xdb\"\xadK1\xabY\x09\xb5[" +
-	"\xc0-\x9a\xd6\xbe\x093W&Yv\xaa\xac\xbd\xf3\xf2" +
-	"\x0a\xf9a\x9cE\xbb\x11;U\x9c=C\x8dJk\xc2" +
-	"4\xf2\xa65\x98\xe7\xdd\xabm\xb3\x81\xb5r~\x03\xcc" +
-	"\x1a\x95\x14\xb7v\xf6W\xa4\xa8N\x12\xa9\xb4\x84z\x8f" +
-	"\xf0\x1b\xec\x87K\xe5\xfbP\x1a\xf6\xd3\xd7\xcaa\xf6\x8d" +
-	"\x96\x1f\xf4J\x8a\xe7\x86\x16\xac\xdeQ[\xfdAv\xef" +
-	"\xb4\x84z(\xe2\xdeOsR\x07%\xd4\xe1HQ=" +
-	"\xc2M\xe4a\x09uJ\x00\xd2w\xefS\xcc\xc8\x09\x09" +
-	"uZ@\x8f\xa1\x031\"}\x9e\xbf>%\xa1\xce\xac" +
-	"\xde\xd2\x81\x9aY\x8b\xb4ry\x0cIBV\xc2\xfb0" +
-	"\xf9\x9f\xa8z\xa5\x09\x93\xed\xf4D\x8dz\xefd\xe8\xb3" +
-	"j\xfaQ\x9b\xd5\xbc\xb7\x93\xc7\xe6\x0e\x09\x95\xbf\xa2\x0c" +
-	"\xfcv\x9bi\x15\xa3\x08\x1b\x0c\xcc\x06\x8ae\xadry" +
-	"\xcc\x1b\xf4\xd2\x17,\x02x\xed\xa5\xba`\xef\xa5\xba`" +
-	"o\x90Z~\xa5\x0e\x9d\x07\x8c\x89)\xb3\xf6\xdf\xa4u" +
-	"1\xe3\x8dp\xdd]\xad\x8el\xbf\x7f\x0aal\xff\x83" +
-	"\x02\x196m\xdb\x187\xb7U&az\xfe\xf5\x12\xdc" +
-	"\xd4\xc7CE\xef\xe9&\x82\xd0\xbbz\x89 \xf5kG" +
-	"\x88\x10\xd3\xaf\xce\x11\xf5\xfb\xb3$\xc5m\xc7O\xd3\xad" +
-	"NO\xd2\xca\x8e\xe9V\x8b\x9d\xe04,M~\xf6\xb6" +
-	"\x97\xe3\xde\xd6\xef\xaee{\x8c\xb3}\\B=)\x90" +
-	"\x80\xeb\xfa\xf9>\xd1G\xa4\xbe\xe0\x97IB\xfc\xcb\xf5" +
-	"\xa1F\x0b%!\x97]\xbf|\xe6Y\xa1'%\xd4\xd3" +
-	"\x02\x89\xd8?]\xbf~\xbe\xca\x85vZB}G " +
-	"\x11\xff\x87\xdb\x818\x91\xbe\x90#Rg$\xd4\xb3\xcc" +
-	"ce\xd2D*<2\x13\x90\"\x04\xf9\"\x1d\x9e\xfb" +
-	"\x83\x81\xc1\x0c\\<\x8b\x03\xe9\xd3\xe1\xa9>(\xc6\x15" +
-	",!\x1d^\xec\x82\xf7\x11\xde\x90\x0e\x8f\xf9u\x13\xfe" +
-	"\"\x0d\xfd\x0a/\x971Vg\x9b\xb5\xd1\xa9S\xf5M" +
-	"o0u\xee\xacs\xefe\xfd*\xea\xd5\xeb\xf7;\x80" +
-	"\xdf\xf4\xe2D\xb5{%\xaa\x97?}\xae\x8f\x84>\xab" +
-	"!\xbc\x9f\xa1zs\xd4+\xdd$\xf4\xa2\x06Q\xbb\x1b" +
-	"\xc1\xbb\xb7\xd2\xf5Gtc3\x09}\xbb\x06Y;\xd6" +
-	"\xa3z%\xd5\x07GH\xe8wh\x88\xd5nt\xa8\xde" +
-	"\x0e\xf5M9\x12z\x8f\x16\xa85\xe0\xab3\x80\x99\xa0" +
-	"I\x0d\xd4\xf1?\xb0\x82\xef\x01dq\xd9#\x8a\x7f=" +
-	"@}\x9b\xe7\x11\xfb\x80\x84z8B\xf1\xec\xe6\xa0\xcd" +
-	"\x9f\x88t\x8dc}\x81\xab\xcf\x84m\xfe\x1b\xdd\xa1#" +
-	"km~a(4\xe4%\x87\xf1\x8cYr\xac\x82i" +
-	"W\xb5J\x87\xd7i\x02\xff\xd8\xefI\x19y_\xbb\xa8" +
-	"\xf9\xef\xff\xbb\x87eo\x9e\xc3\xfe\xbf\xb82\xfd;\x00" +
-	"\x00\xff\xff7\xaeB\xe7"
+type RadixRPC_appendEntries_Params capnp.Struct
+
+// RadixRPC_appendEntries_Params_TypeID is the unique identifier for the type RadixRPC_appendEntries_Params.
+const RadixRPC_appendEntries_Params_TypeID = 0xcd936850429c20a6
+
+func NewRadixRPC_appendEntries_Params(s *capnp.Segment) (RadixRPC_appendEntries_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 2})
+	return RadixRPC_appendEntries_Params(st), err
+}
+
+func NewRootRadixRPC_appendEntries_Params(s *capnp.Segment) (RadixRPC_appendEntries_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 2})
+	return RadixRPC_appendEntries_Params(st), err
+}
+
+func ReadRootRadixRPC_appendEntries_Params(msg *capnp.Message) (RadixRPC_appendEntries_Params, error) {
+	root, err := msg.Root()
+	return RadixRPC_appendEntries_Params(root.Struct()), err
+}
+
+func (s RadixRPC_appendEntries_Params) String() string {
+	str, _ := text.Marshal(0xcd936850429c20a6, capnp.Struct(s))
+	return str
+}
+
+func (s RadixRPC_appendEntries_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (RadixRPC_appendEntries_Params) DecodeFromPtr(p capnp.Ptr) RadixRPC_appendEntries_Params {
+	return RadixRPC_appendEntries_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s RadixRPC_appendEntries_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s RadixRPC_appendEntries_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s RadixRPC_appendEntries_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s RadixRPC_appendEntries_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s RadixRPC_appendEntries_Params) Term() uint64 {
+	return capnp.Struct(s).Uint64(0)
+}
+
+func (s RadixRPC_appendEntries_Params) SetTerm(v uint64) {
+	capnp.Struct(s).SetUint64(0, v)
+}
+
+func (s RadixRPC_appendEntries_Params) LeaderId() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s RadixRPC_appendEntries_Params) HasLeaderId() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s RadixRPC_appendEntries_Params) LeaderIdBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s RadixRPC_appendEntries_Params) SetLeaderId(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s RadixRPC_appendEntries_Params) PrevLogIndex() uint64 {
+	return capnp.Struct(s).Uint64(8)
+}
+
+func (s RadixRPC_appendEntries_Params) SetPrevLogIndex(v uint64) {
+	capnp.Struct(s).SetUint64(8, v)
+}
+
+func (s RadixRPC_appendEntries_Params) PrevLogTerm() uint64 {
+	return capnp.Struct(s).Uint64(16)
+}
+
+func (s RadixRPC_appendEntries_Params) SetPrevLogTerm(v uint64) {
+	capnp.Struct(s).SetUint64(16, v)
+}
+
+func (s RadixRPC_appendEntries_Params) Entries() (LogEntry_List, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return LogEntry_List(p.List()), err
+}
+
+func (s RadixRPC_appendEntries_Params) HasEntries() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s RadixRPC_appendEntries_Params) SetEntries(v LogEntry_List) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewEntries sets the entries field to a newly
+// allocated LogEntry_List, preferring placement in s's segment.
+func (s RadixRPC_appendEntries_Params) NewEntries(n int32) (LogEntry_List, error) {
+	l, err := NewLogEntry_List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return LogEntry_List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
+}
+func (s RadixRPC_appendEntries_Params) LeaderCommit() uint64 {
+	return capnp.Struct(s).Uint64(24)
+}
+
+func (s RadixRPC_appendEntries_Params) SetLeaderCommit(v uint64) {
+	capnp.Struct(s).SetUint64(24, v)
+}
+
+// RadixRPC_appendEntries_Params_List is a list of RadixRPC_appendEntries_Params.
+type RadixRPC_appendEntries_Params_List = capnp.StructList[RadixRPC_appendEntries_Params]
+
+// NewRadixRPC_appendEntries_Params creates a new list of RadixRPC_appendEntries_Params.
+func NewRadixRPC_appendEntries_Params_List(s *capnp.Segment, sz int32) (RadixRPC_appendEntries_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 32, PointerCount: 2}, sz)
+	return capnp.StructList[RadixRPC_appendEntries_Params](l), err
+}
+
+// RadixRPC_appendEntries_Params_Future is a wrapper for a RadixRPC_appendEntries_Params promised by a client call.
+type RadixRPC_appendEntries_Params_Future struct{ *capnp.Future }
+
+func (f RadixRPC_appendEntries_Params_Future) Struct() (RadixRPC_appendEntries_Params, error) {
+	p, err := f.Future.Ptr()
+	return RadixRPC_appendEntries_Params(p.Struct()), err
+}
+
+type RadixRPC_appendEntries_Results capnp.Struct
+
+// RadixRPC_appendEntries_Results_TypeID is the unique identifier for the type RadixRPC_appendEntries_Results.
+const RadixRPC_appendEntries_Results_TypeID = 0x9f7b8d9c9b84fb53
+
+func NewRadixRPC_appendEntries_Results(s *capnp.Segment) (RadixRPC_appendEntries_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return RadixRPC_appendEntries_Results(st), err
+}
+
+func NewRootRadixRPC_appendEntries_Results(s *capnp.Segment) (RadixRPC_appendEntries_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return RadixRPC_appendEntries_Results(st), err
+}
+
+func ReadRootRadixRPC_appendEntries_Results(msg *capnp.Message) (RadixRPC_appendEntries_Results, error) {
+	root, err := msg.Root()
+	return RadixRPC_appendEntries_Results(root.Struct()), err
+}
+
+func (s RadixRPC_appendEntries_Results) String() string {
+	str, _ := text.Marshal(0x9f7b8d9c9b84fb53, capnp.Struct(s))
+	return str
+}
+
+func (s RadixRPC_appendEntries_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (RadixRPC_appendEntries_Results) DecodeFromPtr(p capnp.Ptr) RadixRPC_appendEntries_Results {
+	return RadixRPC_appendEntries_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s RadixRPC_appendEntries_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s RadixRPC_appendEntries_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s RadixRPC_appendEntries_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s RadixRPC_appendEntries_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s RadixRPC_appendEntries_Results) Term() uint64 {
+	return capnp.Struct(s).Uint64(0)
+}
+
+func (s RadixRPC_appendEntries_Results) SetTerm(v uint64) {
+	capnp.Struct(s).SetUint64(0, v)
+}
+
+func (s RadixRPC_appendEntries_Results) Success() bool {
+	return capnp.Struct(s).Bit(64)
+}
+
+func (s RadixRPC_appendEntries_Results) SetSuccess(v bool) {
+	capnp.Struct(s).SetBit(64, v)
+}
+
+// RadixRPC_appendEntries_Results_List is a list of RadixRPC_appendEntries_Results.
+type RadixRPC_appendEntries_Results_List = capnp.StructList[RadixRPC_appendEntries_Results]
+
+// NewRadixRPC_appendEntries_Results creates a new list of RadixRPC_appendEntries_Results.
+func NewRadixRPC_appendEntries_Results_List(s *capnp.Segment, sz int32) (RadixRPC_appendEntries_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
+	return capnp.StructList[RadixRPC_appendEntries_Results](l), err
+}
+
+// RadixRPC_appendEntries_Results_Future is a wrapper for a RadixRPC_appendEntries_Results promised by a client call.
+type RadixRPC_appendEntries_Results_Future struct{ *capnp.Future }
+
+func (f RadixRPC_appendEntries_Results_Future) Struct() (RadixRPC_appendEntries_Results, error) {
+	p, err := f.Future.Ptr()
+	return RadixRPC_appendEntries_Results(p.Struct()), err
+}
+
+const schema_d3c5d01f75666abd = "x\xda\xecX\x7fl]e\xf9\x7f\x9e\xf7\xbd\xb7\xa7\xed" +
+	"\xee\xed\xed\xe9i\xc9w\xdfH\x8a\xcd\x10\xa8\x16\xb1\x1d" +
+	"\x096&\xed\x0aUZ\xd7x\xdf\xbbM\xc72\xc5\xd3" +
+	"\xde\xd3\xed\x8e\xde{\xee\xce=-\xad\x80\xdd\xc8\x16\x98" +
+	"\xd9\x0c\x0cf\x1cT\xc1e]\xe6\xdc\xe2\x86\xd60\x03" +
+	"\x11\x9a\x10\x07\x01\x11a1\x10\xaaB\x1c\x13\xb41\x8b" +
+	"C3\xa1\x1e\xf3\x9c\xdf\xf7\xecvc*\x7f\x98\xf8\xdf" +
+	"\xb9\xe7<\xf7y\x9f\xe7\xf3\xf9\xbc\xcf\xfb<\xefu\xaf" +
+	"Tu\xc7>\x95\xb4j\x80\x093^e\x9d\xfc\xe4\x16" +
+	"\xf3\x8e\xbe\xd7\xef\x01\x91@n=\xb9ix\xb4\xf9\x97" +
+	"\xcf\xbc\x0cq\x94\x00\x94S\xb1\xbf+gb\xf44\x1f" +
+	";\x0d\xf8\xdb\x9f\x8d/\x9c\xb9\xff\xaa\xddr\x13\x82c" +
+	"\xd1\xf1B\xbc\x15\x01\x95\x93\xf1.@\xeb\xf9\xc1\x83\xf3" +
+	"\xf9?\xfcb7\x88&d\x00qF\x16\xef\xc6\xff\x9f" +
+	",\x16\xe2\xa7\x01\xado\x0c\xaf\xf9\xcd5\xc7V<\xe0" +
+	"Z\x90\xeb\x8eW\xab\xfa\xc9\xe0T\xd5\xed\x80\xd6\xa6-" +
+	"so\xbdu\xf23\x0fAh\x8d^\xa9\x81\x0c\x06$" +
+	"Z\xe3\xae\xbf|!\xb6\xbdn\xfbC\xe4\x81\xbb\x1e\xf2" +
+	"R\x0b\x19\x8cJ?\x04\xb4\x0e\xff\xfc[{nY\xa7" +
+	">B\x09\xb1PB\x14\x8c\"W?\xa6,\xad\xa6\xa7" +
+	"\xa6j\x8ag\xd5{\xdb\x1e\x9e\xdau\xc7#\xe1x\xe6" +
+	"\xab\xd7\x91\xb7s\xd5\x14\xcf\x83x\xdfY\xe9\xeb\xc3\x87" +
+	"\xc2\x06kj:\xc9\xe0\xcb5d\xf0\xe7\xd4\x9e\xfb\xbb" +
+	"\xee\xfe\xc9\x8c\x97\xb3\x1d\xf1\xf1\x9aZ\xb2x\xba\x86\x02" +
+	"\xdas\xf5Kol\xbb\xe2\xecq\xb2\xf0sRk\xdb" +
+	"\xc9\"WK>N|v\xf9\x9f~w_\xddOA" +
+	"N`\x94\x82gk_SN\xd6\xd2\xd3K\xb5\x94\xff" +
+	"\xc3]\xebO\x9c\xfd\xe6\xe3OD\xd3\xe3dr\xae\xf6" +
+	"WJ|\x09\xf9\xc7%\xcd\x08h\xfd5\xf1\xda\xaf;" +
+	"\xab>\xfedYtm\x09\x1b\xae\xeb\x13\x14\xdd\xd2\xf9" +
+	"\x1d\xcfd>\xd6\xffTdm\xdb\xdd\\\xe29\xe5\xed" +
+	"\x84-\x04\xdbv!\xf3\x95\xbd\xcb\x0f\xec{\x8a\xd6>" +
+	"/\xd0]\xc9w\x94\xbdIz\xda\x93\xa4\xa4\xde\x9e9" +
+	"w\xeb\x8fv\x8c=M\xc6\xb1\x08\x0f\x1d\xef&kQ" +
+	"\x89\xd7\xd9\x91\xd6}\x89\"}g:\xf7\xfa\xe4\xaaS" +
+	"\xb3 'Bi\x01*\xf9\xd4\xac2\x9a\"\xbf\x9bS" +
+	"\x93\x80\xd6\x0ffo}\xf1\xbb\xb9\xc1\x13\x91 zQ" +
+	"\x8a#*GR\xcf)\xc7\xc9\xbac&e\xfb=p" +
+	"\xc5TOz\xe3\x03/\x10\x021O\x935r\x06\x01" +
+	";\x9ad\xdbd~.~\xe5\x9b\xfb\x07_\x8c@`" +
+	"\x0bfk\xc3\xac\xb2\xa3\x81\x9e\xb67PVk\xcd\xaf" +
+	"\xfdm\x0d\x9bz\x19\xe4\x04/\x0b\xf3L\xc3!\xe5\\" +
+	"\x83\x9d[\xc3=\xa8\x9cQ$\x00\xabc\xe0\x86%\xfd" +
+	";w\xceU$\xebUeVy\x83\xcc:\xe6\x14\x9b" +
+	"\xac\xc7:\xe7\xef\xde\xdc\xf0\xe6YW\xda\x0eYMM" +
+	"=D\xd6\xe5M$\xd7\x83\xbf\xff\xe8\x81\x99\xcc\x1f\xdf" +
+	"\xaf\xa8\xed\x85\xa6CJ\xfc2z\xc2\xcbNC\x9be" +
+	"\xa8\xd9\xdc\xf8\xb5C*+\x16\x8a\x9d\x19m\xf3\xa8V" +
+	"2\xbf\xa8\x9bZ\xbaK\x9d\x18\xd1\xd5l\x1aQ\xd4\xf3" +
+	"\x18@\x0c\x01d\xb5\x15@\xac\xe7(62Dl$" +
+	"\xa5\xca\xda \x80\xc8r\x14E\x862\xc3F\x92\x90\x9c" +
+	"\xdf\x04 F8\x8aq\x862g\x8d\x14\xaa<J\x96" +
+	"&G\xb1\x85a\xca\xd4\x8c<\xd6\x00\xc3\x1a@kH" +
+	"-dsY\xd5\x04I\xeb\xcbb\x02\x18&\x00\xad\x11" +
+	"\xb5d\xae\xd47\xf4A\xaa\x90\xd5\xc6}c\xf7\xf5j" +
+	"\x90\xc2.\xbcD\xb8\x9d\x08\xfd\xc8\xa4o\xbc\xd6\xd0\x86" +
+	"\xf41\xcdX\x96\xd1J\xa9\xd1\x11\xb3$b~.\xc9" +
+	"v\x00Q\xcdQ42l.\x99\xaa\xa9a}\xc0\x05" +
+	" \xd6/\xea5W(i\x86\xb9,\xad\x1a*\xcf\x97" +
+	"\xc2\xf8\xb4\x04\xf8\xc8>@\xfd\x01@\xc8\\|\x08\xc8" +
+	"\x8d\x1c\x85I\xf8\xa0\x83\xcff2,r\x14w2\x94" +
+	"n\xd3&0\x09\x0c\x93\x80\x96j\x98\xb9au\xc8\x04" +
+	"\x00\xef]9~#\xfa\x86>\xc2\x88\x0c\xa2\x80\xc4\"" +
+	"\x80\xf8\x14\x13(\x84\x89\x0d\x83\x97\xc15\x14\xd82\x8e" +
+	"\xe2:\xca\xa0\xdb\xc9\xa0\x8d\x88\xfb\x04GqC\x94\xb8" +
+	"1\xdd\xd4>g\xa8\x05\x90L-\x8b\x08\x0cqQ\xd4" +
+	"J\x13\x85!wM,#\xa25 \"\x95\xcd\x0d\x0f" +
+	"_*\x0f\xe4S\"r\x13\xbe\xcf\xde\x1e\x00\xd1\xcdQ" +
+	"\xac\x0c\x11\xd1G\x0b\xdd\xc4Q\xa4I\xa9.\x13\x03\x04" +
+	"\xfaJ\x8eb-\xc3\xc9\xd2\xe8\xd0\x90V*y\x89|" +
+	"p\x90\x91\xe2Z5Q\x18j\xee-\x98\xc6Dd\xd7" +
+	"\xfc{\xaah\x0f\xb6\xd2%\xa9\xa29W\xb6m*\xeb" +
+	"A-\x16\xb5B\x96\x82\xcei%\x87\x1dn\x96.*" +
+	"\x08\x82\xf7j\x8ebyD\x10Q\x04\x17!n\xa3\xa6" +
+	"\x1a\xe6\xa0\xa6\x9a\xcb2]\x8e\x08?\xec\x15m\xf1\xd1" +
+	"\x86\xcd\x93\xdeCBY\x17h\xc2\xa3f\x80\x02\xb8\x99" +
+	"\xa3X\x1d\xaah\x82\xf8Js\x14\xeb\x19Zy\xcd\xb8" +
+	"mD\xcb\xe8\xc0u\xf3\xd2w\xe4bX\xa4\x9b\xed\xf8" +
+	"\x16\x81\xc2\x8b\xae\xad\x7f\xb1\xcd8\xa2\xa9Y\xcd\xe8\xcb" +
+	"\xd2\x9a^\x0d\x8d\xd4w\xbb\x1a\xa6\xa9\xb4s\xa7\xb6\x87" +
+	"\xb6\xe1>\x00Q\xcfQ|\x8495\xf6\xf3\x05\xfdv" +
+	",\x0c8\xa9Jz\x90i\xb9\xd3>{\x13\xda>U" +
+	"\xb4}6\xfa>\xef\"\xe5\x8fs\x14\xdbB\xca\xdfJ" +
+	"\x09l\xe1(v\x86\xb6\xe1\x0e*1\xf7r\x14\xfb\x19" +
+	"\"w\x94\xff=\xca~\x8a\xa38\xc8P\x8ea#\x1d" +
+	"\xcd\xf24\xfd{?Gq\xf4\xe2\xdb\xc1\xe5)m\x80" +
+	"\xa4\xeb\xc3X\x07\x98\xe6h\x7f\xac\xfb\xd7\xf9\xf2\x8e\x94" +
+	"\xb4jH\xc4VHK\xfb\x02\xddx\xc9\x86e\xe3k" +
+	"\xe9\x16:\x1d\xd7r\x14\xd9\x8bBM_WkF>" +
+	"\x1c\xd7\"\xe7b\x19+iC\xd7\x87\x1dR\xb2\x00\xc4" +
+	"J(\xce\x96J\xc5\xb1\xbdRqlw3\xca\x96\x83" +
+	"\xdd<\xa6\x8e\x8cj\xfe\xaf\xa2q>\xbc\xe5\xe1\xdc\xec" +
+	"\x89<\xadN\xa4\xbc\xbe\xe2\xc3\xd0\xb9\xcd\xd5\x8apQ" +
+	"+\x03\xe1\xff\xfc%\xf7\xd2\x92\x0fr\x14\x8f\x06K~" +
+	"\xa7?$8\x8f\xac\xe9M\x81\xe0\xfcV\xe6\x08\xc9\xf5" +
+	"0G\xf1xH\x9a3T\xa3\x8er\x14\xcf3\x94\xe3" +
+	"\xbc\x11\xe3\x00\xf2\xb3\xf4\xf7\x13\x1c\xc5+\x1f$\x8d\xa2" +
+	"\xa1\x8dU\xa0\xd6}]\xde\xf2LjN\x82\x1e\xf0\xf5" +
+	"A\xe7\x07hS\xe0\xacp\xa3\x0e\xa9|>gV\x16" +
+	"\xca\x80V*\xa9\x1b\xb4\xd5\x13E\xcdF\xc8I\xfa\xfa" +
+	"N\xf2!\xb7\xb5\x02 \x93\xafl\x07@._>\x08" +
+	"\x801yi\x06\xa0\xcb9zSTV\x1d\xfa-\xaf" +
+	"\xb3\x00I75\xcb\xabj\x80f\xa4\x06\xd1\x0fw\xd1" +
+	"\x0bq\x92D\xcbrY\xe9\x04\x10\xdfvJC\x92\xfd" +
+	"\xc3r\"\x0c\x17\x87$_\xb0\x1c^\xa6I\xb0\x8fr" +
+	"\x14\x87\x19&c\xef[\x0e1\xdf'\xb6\x0er\x14?" +
+	"f\x98\x8c\xbfg9\xcc\x1c\xcb\xb8t=A\xccL\x14" +
+	"5L\x05\x03\x06 \xa6\x00\xdd4\xb1>\x98\xa8\x9c\x86" +
+	"\xc4N\xfc\xfc>\xc5\xdd\x09\xf5\xc1\xc0\xe4\xf5/ap" +
+	"\xb0>\x18\xa8\xdd\xef!\xb8\xb0>\x18\xa1\"\xdd\xcf\x85" +
+	"\x8en\xfbl\xc3\xd2\xff\x14^A\xe1\xce!\xa0\xeb\xc3" +
+	"\x10);-\xe1N\xc3\xab;\xedn\xa7qS\xa4\xe6" +
+	"]\xb0\xca\xa1GM\x8a\xb8qd\x1d\x07\xf0o;\xd0" +
+	"\xbb\x92\x90\x8fu\x02\x93\xa7%\x0cn\x05\xd0\xbb\xcf " +
+	"\xca\x98\xbcKB\xe6\xcf\xe4h\xdf\xa6\xc0U\xbb\xe5\xad" +
+	"=\xc0\xe4Q\x09\xb9?\x02\xa2wQ\"\xe7\x06\x81\xc9" +
+	"\xaa\x841\xff\x1e\x01\xbd;\x09yM\x06\x98< a" +
+	"\xdc\x9fr\xd1\xbb\xd0\x90W\x18\xc0\xe4OK\xae\xcc\xbb" +
+	"\x1dYw\xe3\xa4{\xc6uG\x84\xdb]&\xd4n\xb4" +
+	"<\x09B\xb3\xcdS7\xa61\x02>\xf5\xc4^\x05\x8e" +
+	"\xf4\x06\xd4y\xdd\xc9Q\xdc\x1b\x02\x7f{\x8f\xdb\x1bL" +
+	"\x85N\xa1\xbd\x9d\xae\x90\x8f\x06\xbd\xc1\x91\xd6`K\xfb" +
+	"\xf2<\xd6\x1f\xec\xe8\x8a=\xda\xf9\x82\xf2/\x82\x1cA" +
+	"u\xd9$\x87\xbe\xfbc\xbf\xf3\xfd?1v\xb9]\xe8" +
+	"\x7f\xd7Xm\xeb{\xa5\xbe\xa17Ua\xbei\xad4" +
+	"\xdf\xd06\xfa*G1\x12\xcc7\xb9\x96PN\xde|" +
+	"\x93o\x0f\x86\x9e\x0b\xcc/\x8b\xb7\x1f\xff\x0c\x00\x00\xff" +
+	"\xffr\x97\xf0\xed"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
@@ -2662,6 +3145,7 @@ func RegisterSchema(reg *schemas.Registry) {
 			0x9a3cd5e6e6dd806a,
 			0x9a850e85044ff37d,
 			0x9f615a599596c7ac,
+			0x9f7b8d9c9b84fb53,
 			0xaa667e07f4900194,
 			0xb5b6823f91950fef,
 			0xb9f42084e1d12895,
@@ -2670,12 +3154,15 @@ func RegisterSchema(reg *schemas.Registry) {
 			0xbd2b063ad7da0cf6,
 			0xc04a2652c589ed19,
 			0xc0a2a634995e52fd,
+			0xc17689b35ff9b5e9,
 			0xc2e5537fdc69a5ea,
 			0xc862699ecf5fc2ab,
+			0xcd936850429c20a6,
 			0xcf62a4e22505dded,
 			0xd39c0255f77a7458,
 			0xdd8c8c4a0b384d33,
 			0xf4e2127182ed3ab2,
+			0xfceb52b5a621e4a8,
 		},
 		Compressed: true,
 	})

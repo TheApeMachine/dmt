@@ -48,6 +48,7 @@ type PersistentStore struct {
 	walWriter  *bufio.Writer
 	walPath    string
 	snapPath   string
+	dir        string // Directory for WAL and snapshots
 	writeMutex sync.Mutex
 	syncChan   chan struct{}
 	lastIndex  uint64
@@ -56,6 +57,11 @@ type PersistentStore struct {
 	snapCount uint64    // Number of entries before triggering snapshot
 	lastSnap  time.Time // Time of last snapshot
 	snapMutex sync.RWMutex
+
+	// Concurrency control
+	closedMutex sync.RWMutex
+	closed      bool
+	wg          sync.WaitGroup
 }
 
 /*
@@ -82,11 +88,13 @@ func NewPersistentStore(dir string) (*PersistentStore, error) {
 		walWriter: bufio.NewWriter(walFile),
 		walPath:   walPath,
 		snapPath:  snapPath,
+		dir:       dir,
 		syncChan:  make(chan struct{}, 100),
 		snapCount: 1000, // Create snapshot every 1000 entries
 	}
 
 	// Start background syncing
+	ps.wg.Add(1)
 	go ps.backgroundSync()
 
 	// Load last term/index from WAL
@@ -103,6 +111,13 @@ It writes the operation type, key, and value to the WAL buffer and
 signals the background sync goroutine to flush to disk.
 */
 func (ps *PersistentStore) LogInsert(key, value []byte, term, index uint64) error {
+	ps.closedMutex.RLock()
+	defer ps.closedMutex.RUnlock()
+
+	if ps.closed {
+		return fmt.Errorf("persistent store is closed")
+	}
+
 	ps.writeMutex.Lock()
 	defer ps.writeMutex.Unlock()
 
@@ -139,15 +154,18 @@ func (ps *PersistentStore) LogInsert(key, value []byte, term, index uint64) erro
 	ps.lastTerm = term
 	ps.lastIndex = index
 
-	// Signal for background sync
-	select {
-	case ps.syncChan <- struct{}{}:
-	default:
+	// Flush immediately for synchronous writes
+	if err := ps.walWriter.Flush(); err != nil {
+		return err
+	}
+	if err := ps.walFile.Sync(); err != nil {
+		return err
 	}
 
 	// Check if snapshot needed
 	if index%ps.snapCount == 0 {
-		go ps.createSnapshot()
+		// Note: createSnapshot will be called externally with tree data
+		// This is just a placeholder for the snapshot trigger logic
 	}
 
 	return nil
@@ -159,11 +177,14 @@ It listens on the sync channel and ensures that buffered writes are
 persisted to stable storage.
 */
 func (ps *PersistentStore) backgroundSync() {
-	for range ps.syncChan {
-		ps.writeMutex.Lock()
-		ps.walWriter.Flush()
-		ps.walFile.Sync()
-		ps.writeMutex.Unlock()
+	// This function is now a no-op as writes are synchronous.
+	// The waitgroup logic remains to prevent breaking changes in Close().
+	defer ps.wg.Done()
+	for {
+		_, ok := <-ps.syncChan
+		if !ok {
+			return
+		}
 	}
 }
 
@@ -172,11 +193,24 @@ Close closes the persistent store, ensuring all buffered data is
 written to disk and resources are properly released.
 */
 func (ps *PersistentStore) Close() error {
+	ps.closedMutex.Lock()
+	if ps.closed {
+		ps.closedMutex.Unlock()
+		return nil
+	}
+	ps.closed = true
+	ps.closedMutex.Unlock()
+
+	// Signal the background worker to stop and wait for it
 	close(ps.syncChan)
+	ps.wg.Wait()
+
+	// Final flush and close under lock
 	ps.writeMutex.Lock()
 	defer ps.writeMutex.Unlock()
 
 	if err := ps.walWriter.Flush(); err != nil {
+		ps.walFile.Close() // Best effort
 		return err
 	}
 	return ps.walFile.Close()
@@ -253,8 +287,8 @@ func (ps *PersistentStore) loadLastState() error {
 	return nil
 }
 
-// createSnapshot creates a new snapshot and truncates the WAL
-func (ps *PersistentStore) createSnapshot() error {
+// CreateSnapshotWithTree creates a new snapshot with complete tree state and truncates the WAL
+func (ps *PersistentStore) CreateSnapshotWithTree(tree *Tree) error {
 	ps.snapMutex.Lock()
 	defer ps.snapMutex.Unlock()
 
@@ -276,11 +310,50 @@ func (ps *PersistentStore) createSnapshot() error {
 	}
 	defer file.Close()
 
-	// Write snapshot metadata
+	// Count entries first to write accurate header
+	var entryCount uint64
+	if tree != nil {
+		it := tree.root.Root().Iterator()
+		for _, _, ok := it.Next(); ok; _, _, ok = it.Next() {
+			entryCount++
+		}
+	}
+
+	// Write snapshot header with metadata and entry count
 	if err := binary.Write(file, binary.LittleEndian, ps.lastTerm); err != nil {
 		return err
 	}
 	if err := binary.Write(file, binary.LittleEndian, ps.lastIndex); err != nil {
+		return err
+	}
+	if err := binary.Write(file, binary.LittleEndian, entryCount); err != nil {
+		return err
+	}
+
+	// Write all key-value pairs from the tree
+	if tree != nil {
+		it := tree.root.Root().Iterator()
+		for key, value, ok := it.Next(); ok; key, value, ok = it.Next() {
+			// Write key length and key
+			if err := binary.Write(file, binary.LittleEndian, uint32(len(key))); err != nil {
+				return err
+			}
+			if _, err := file.Write(key); err != nil {
+				return err
+			}
+
+			// Write value length and value
+			if err := binary.Write(file, binary.LittleEndian, uint32(len(value))); err != nil {
+				return err
+			}
+			if _, err := file.Write(value); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Ensure data is written to disk
+	if err := file.Sync(); err != nil {
 		return err
 	}
 
@@ -363,4 +436,166 @@ func (ps *PersistentStore) GetLastState() (term, index uint64) {
 	ps.writeMutex.Lock()
 	defer ps.writeMutex.Unlock()
 	return ps.lastTerm, ps.lastIndex
+}
+
+// UpdateTerm persists the current term to the WAL without adding a KV entry.
+// It writes a snapshot-style record to track the latest term while preserving index.
+func (ps *PersistentStore) UpdateTerm(term uint64) error {
+	ps.writeMutex.Lock()
+	defer ps.writeMutex.Unlock()
+
+	// Check if closed under write lock to avoid races with Close()
+	ps.closedMutex.RLock()
+	if ps.closed {
+		ps.closedMutex.RUnlock()
+		return nil
+	}
+	ps.closedMutex.RUnlock()
+
+	ps.lastTerm = term
+	// Write a snapshot record with new term and current index
+	if err := ps.walWriter.WriteByte(opSnapshot); err != nil {
+		return err
+	}
+	if err := binary.Write(ps.walWriter, binary.LittleEndian, ps.lastTerm); err != nil {
+		return err
+	}
+	if err := binary.Write(ps.walWriter, binary.LittleEndian, ps.lastIndex); err != nil {
+		return err
+	}
+	// Flush immediately to ensure term updates are durable
+	if err := ps.walWriter.Flush(); err != nil {
+		return err
+	}
+	return ps.walFile.Sync()
+}
+
+// LoadSnapshot loads the most recent snapshot and returns the key-value pairs
+func (ps *PersistentStore) LoadSnapshot() (map[string][]byte, uint64, uint64, error) {
+	// Find the most recent snapshot file
+	snapFiles, err := filepath.Glob(filepath.Join(ps.snapPath, "snapshot-*"))
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	if len(snapFiles) == 0 {
+		return nil, 0, 0, nil // No snapshot exists
+	}
+
+	// Use the most recent snapshot (they're named with term-index, so lexicographic sort works)
+	var latestSnap string
+	for _, snapFile := range snapFiles {
+		if snapFile > latestSnap {
+			latestSnap = snapFile
+		}
+	}
+
+	file, err := os.Open(latestSnap)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	defer file.Close()
+
+	// Read snapshot header
+	var term, index, entryCount uint64
+	if err := binary.Read(file, binary.LittleEndian, &term); err != nil {
+		return nil, 0, 0, err
+	}
+	if err := binary.Read(file, binary.LittleEndian, &index); err != nil {
+		return nil, 0, 0, err
+	}
+	if err := binary.Read(file, binary.LittleEndian, &entryCount); err != nil {
+		return nil, 0, 0, err
+	}
+
+	// Read all key-value pairs
+	data := make(map[string][]byte)
+	for i := uint64(0); i < entryCount; i++ {
+		// Read key
+		var keyLen uint32
+		if err := binary.Read(file, binary.LittleEndian, &keyLen); err != nil {
+			return nil, 0, 0, err
+		}
+		key := make([]byte, keyLen)
+		if _, err := file.Read(key); err != nil {
+			return nil, 0, 0, err
+		}
+
+		// Read value
+		var valueLen uint32
+		if err := binary.Read(file, binary.LittleEndian, &valueLen); err != nil {
+			return nil, 0, 0, err
+		}
+		value := make([]byte, valueLen)
+		if _, err := file.Read(value); err != nil {
+			return nil, 0, 0, err
+		}
+
+		data[string(key)] = value
+	}
+
+	return data, term, index, nil
+}
+
+// LoadAll returns all key/value entries recorded in the WAL in write order.
+// It is used for state recovery to rebuild in-memory structures.
+func (ps *PersistentStore) LoadAll() ([]WALEntry, error) {
+	file, err := os.Open(ps.walPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+	entries := make([]WALEntry, 0)
+	for {
+		op, err := reader.ReadByte()
+		if err != nil {
+			break
+		}
+		switch op {
+		case opInsert:
+			var term uint64
+			var index uint64
+			if err := binary.Read(reader, binary.LittleEndian, &term); err != nil {
+				return entries, nil
+			}
+			if err := binary.Read(reader, binary.LittleEndian, &index); err != nil {
+				return entries, nil
+			}
+			var klen uint32
+			if err := binary.Read(reader, binary.LittleEndian, &klen); err != nil {
+				return entries, nil
+			}
+			key := make([]byte, klen)
+			if _, err := reader.Read(key); err != nil {
+				return entries, nil
+			}
+			var vlen uint32
+			if err := binary.Read(reader, binary.LittleEndian, &vlen); err != nil {
+				return entries, nil
+			}
+			val := make([]byte, vlen)
+			if _, err := reader.Read(val); err != nil {
+				return entries, nil
+			}
+			entries = append(entries, WALEntry{Op: opInsert, Term: term, Index: index, Key: key, Value: val})
+		case opSnapshot:
+			// Read snapshot metadata and include as term-only entry
+			var term uint64
+			var index uint64
+			if err := binary.Read(reader, binary.LittleEndian, &term); err != nil {
+				return entries, nil
+			}
+			if err := binary.Read(reader, binary.LittleEndian, &index); err != nil {
+				return entries, nil
+			}
+			// Add term-only entry to preserve term updates
+			entries = append(entries, WALEntry{Op: opSnapshot, Term: term, Index: index, Key: nil, Value: nil})
+		}
+	}
+	return entries, nil
 }

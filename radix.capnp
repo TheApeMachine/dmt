@@ -1,10 +1,8 @@
 @0xd3c5d01f75666abd;  # Your unique ID here
 
 using Go = import "/go.capnp";
-$Go.package("radix");
-$Go.import("github.com/theapemachine/caramba/pkg/radix");
-
-using Artifact = import "../datura/artifact.capnp";
+$Go.package("dmt");
+$Go.import("github.com/theapemachine/dmt");
 
 # Message types for radix tree network communication
 struct RadixMessage {
@@ -28,10 +26,10 @@ enum MessageType {
 
 struct InsertPayload {
   key @0 :Data;
-  artifact @1 :Artifact.Artifact;
-  merkleProof @2 :List(Data);  # Add Merkle proof
-  term @3 :UInt64;  # Add term tracking
-  logIndex @4 :UInt64;  # Add log index tracking
+  artifact @1 :Data;  # raw bytes
+  merkleProof @2 :List(Data);
+  term @3 :UInt64;
+  logIndex @4 :UInt64;
 }
 
 struct SyncPayload {
@@ -44,9 +42,9 @@ struct SyncPayload {
 
 struct SyncEntry {
   key @0 :Data;
-  artifact @1 :Artifact.Artifact;
-  term @2 :UInt64;  # Add term tracking
-  index @3 :UInt64;  # Add log index tracking
+  artifact @1 :Data;  # raw bytes
+  term @2 :UInt64;
+  index @3 :UInt64;
 }
 
 struct ProofPayload {
@@ -76,13 +74,29 @@ struct HeartbeatPayload {
   leaderId @1 :Text;
 }
 
+struct AppendEntriesPayload {
+  term @0 :UInt64;
+  leaderId @1 :Text;
+  prevLogIndex @2 :UInt64;
+  prevLogTerm @3 :UInt64;
+  entries @4 :List(LogEntry);
+  leaderCommit @5 :UInt64;
+}
+
+struct LogEntry {
+  term @0 :UInt64;
+  index @1 :UInt64;
+  key @2 :Data;
+  value @3 :Data;
+}
+
 interface RadixRPC {
   # Insert an artifact into the tree
-  insert @0 (key :Data, artifact :Artifact.Artifact, term :UInt64, logIndex :UInt64) -> (success :Bool, term :UInt64, logIndex :UInt64);
-  
+  insert @0 (key :Data, artifact :Data, term :UInt64, logIndex :UInt64) -> (success :Bool, term :UInt64, logIndex :UInt64);
+
   # Request synchronization with peers
   sync @1 (merkleRoot :Data, term :UInt64, logIndex :UInt64) -> (diff :SyncPayload);
-  
+
   # Request recovery after restart
   recover @2 (lastKnownMerkleRoot :Data, lastTerm :UInt64, lastLogIndex :UInt64) -> (state :SyncPayload);
 
@@ -91,4 +105,7 @@ interface RadixRPC {
 
   # Send heartbeat to maintain leadership
   heartbeat @4 (term :UInt64, leaderId :Text) -> (term :UInt64, success :Bool);
-} 
+
+  # Append entries for log replication (Raft)
+  appendEntries @5 (term :UInt64, leaderId :Text, prevLogIndex :UInt64, prevLogTerm :UInt64, entries :List(LogEntry), leaderCommit :UInt64) -> (term :UInt64, success :Bool);
+}
